@@ -6,7 +6,7 @@
     "author": "BERMARO GmbH",
     "description": "Berechnet den Verkaufspreis fuer konfigurierte Mirka-Schleifbaender ueber die Mirka Belt Calculator API und setzt ihn im Warenkorb. Liest Konfigurationsdaten aus den Bestelleigenschaften, ruft die Mirka-API ueber einen externen Proxy auf, wendet Haendlerrabatt und Margenfaktor an und ueberschreibt den Artikelpreis sicher serverseitig.",
     "phpNamespace": "MirkaBeltCalculator",
-    "require": "services",
+  
     "serviceProvider": "MirkaBeltCalculator\\Providers\\MirkaBeltCalculatorServiceProvider",
     "dependencies": {
         "Ceres": "^5.0.0"
