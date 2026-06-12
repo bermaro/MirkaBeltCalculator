@@ -1,0 +1,227 @@
+[
+    {
+        "tab": "1. Artikel",
+        "key": "samplingVariationId",
+        "label": "Variations-ID des Sammelartikels (Produktion)",
+        "type": "text",
+        "default": "22994"
+    },
+    {
+        "tab": "1. Artikel",
+        "key": "testVariationId",
+        "label": "Variations-ID fuer Tests (optional)",
+        "type": "text",
+        "default": ""
+    },
+    {
+        "tab": "2. Mirka-Anbindung",
+        "key": "proxyUrl",
+        "label": "Cloud-Function-URL (ohne / am Ende)",
+        "type": "text",
+        "default": ""
+    },
+    {
+        "tab": "2. Mirka-Anbindung",
+        "key": "apiTimeoutSeconds",
+        "label": "API-Timeout in Sekunden",
+        "type": "text",
+        "default": "10"
+    },
+    {
+        "tab": "3. Preise",
+        "key": "defaultDiscount",
+        "label": "Standard-Rabatt (Dezimal, z.B. 0.52 fuer 52%)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "3. Preise",
+        "key": "marginFactor",
+        "label": "Margenfaktor (z.B. 0.5 fuer Faktor 1.5)",
+        "type": "text",
+        "default": "0.5"
+    },
+    {
+        "tab": "4. Bestelleigenschaften",
+        "key": "propertyIdSchleifmittel",
+        "label": "Property-ID Schleifband Qualitaet",
+        "type": "text",
+        "default": "64"
+    },
+    {
+        "tab": "4. Bestelleigenschaften",
+        "key": "propertyIdKoernung",
+        "label": "Property-ID Schleifband Koernung",
+        "type": "text",
+        "default": "65"
+    },
+    {
+        "tab": "4. Bestelleigenschaften",
+        "key": "propertyIdVerbindung",
+        "label": "Property-ID Schleifband Verbindung",
+        "type": "text",
+        "default": "66"
+    },
+    {
+        "tab": "4. Bestelleigenschaften",
+        "key": "propertyIdBreite",
+        "label": "Property-ID Schleifband Breite in mm",
+        "type": "text",
+        "default": "67"
+    },
+    {
+        "tab": "4. Bestelleigenschaften",
+        "key": "propertyIdLaenge",
+        "label": "Property-ID Schleifband Laenge in mm",
+        "type": "text",
+        "default": "68"
+    },
+    {
+        "tab": "4. Bestelleigenschaften",
+        "key": "propertyIdMirkaCode",
+        "label": "Property-ID Mirka Artikelnummer",
+        "type": "text",
+        "default": "69"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discountAB0",
+        "label": "Abranet Max (AB0)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount330",
+        "label": "Alox (330)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount42A",
+        "label": "Avomax Antistatic (42A)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount470",
+        "label": "Gold Max (470)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount5B0",
+        "label": "Hiolit JCA2A0 (5B0)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount590",
+        "label": "Hiolit XO (590)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount5C0",
+        "label": "Hiolit YPZ1A0 (5C0)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount44A",
+        "label": "Jepuflex Antistatic (44A)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discountEAB",
+        "label": "MI231A 5MIL (EAB)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discountFM0",
+        "label": "Microstar (FM0)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount04A",
+        "label": "Sica Closed (04A)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount050",
+        "label": "Sica Fine Stearate (050)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount490",
+        "label": "Sica Open (490)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discountUC0",
+        "label": "Ultimax (UC0) - bei Mirka klaeren!",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discountUB0",
+        "label": "Ultimax Black (UB0) - bei Mirka klaeren!",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "5. Rabatte pro Schleifmittel",
+        "key": "discount110",
+        "label": "Unimax (110)",
+        "type": "text",
+        "default": "0.52"
+    },
+    {
+        "tab": "6. Test & Debug",
+        "key": "debugMode",
+        "label": "Debug-Modus",
+        "type": "dropdown",
+        "possibleValues": {
+            "on": "AN (Test mit ausfuehrlichem Logging)",
+            "off": "AUS (Produktiv-Betrieb)"
+        },
+        "default": "on"
+    },
+    {
+        "tab": "6. Test & Debug",
+        "key": "mockMode",
+        "label": "Mock-Modus (Test ohne Mirka-API)",
+        "type": "dropdown",
+        "possibleValues": {
+            "on": "AN (Test mit Mock-UVP)",
+            "off": "AUS (echter Mirka-API-Aufruf)"
+        },
+        "default": "on"
+    },
+    {
+        "tab": "6. Test & Debug",
+        "key": "mockUvp",
+        "label": "Mock-UVP in EUR (nur im Mock-Modus)",
+        "type": "text",
+        "default": "100.00"
+    }
+]
