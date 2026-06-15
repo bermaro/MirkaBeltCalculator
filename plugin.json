@@ -1,13 +1,10 @@
 {
     "name": "MirkaBeltCalculator",
-    "type": "template",
-    "version": "1.0.2",
+    "type": "integration",
+    "version": "1.0.3",
     "namespace": "MirkaBeltCalculator",
     "author": "BERMARO GmbH",
     "description": "Berechnet den Verkaufspreis fuer konfigurierte Mirka-Schleifbaender ueber die Mirka Belt Calculator API und setzt ihn im Warenkorb.",
     "phpNamespace": "MirkaBeltCalculator",
-    "serviceProvider": "MirkaBeltCalculator\\Providers\\MirkaBeltCalculatorServiceProvider",
-    "dependencies": {
-        "Ceres": "^5.0.0"
-    }
+    "serviceProvider": "MirkaBeltCalculator\\Providers\\MirkaBeltCalculatorServiceProvider"
 }
