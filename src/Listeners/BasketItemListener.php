@@ -8,39 +8,29 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener
+ * BasketItemListener (v1.0.8)
  *
- * Wird ausgeloest, BEVOR ein Artikel in den Warenkorb gelegt wird.
- *
- * Workflow:
- *  1. Pruefen, ob es der Sammelartikel (oder Test-Artikel) ist.
- *  2. Konfigurationsdaten aus den Bestelleigenschaften lesen.
- *  3. Preis berechnen (echt oder Mock).
- *  4. useGivenPrice = true und givenPrice = berechneter VK setzen.
- *  5. Im Debug-Modus: Zusatz-Eintrag in orderParams fuer sichtbare Debug-Info.
+ * WICHTIGE AENDERUNG: KEIN Constructor mehr. Die Abhaengigkeiten
+ * (PluginConfig, PriceCalculationService) werden erst INNERHALB von handle()
+ * per pluginApp() geholt. Das ist der von Plenty empfohlene Weg und vermeidet
+ * die verschachtelte Constructor-DI-Kette, die das Booten verhindert hat.
  */
 class BasketItemListener
 {
     use Loggable;
 
-    /** @var PluginConfig */
-    private $config;
-
-    /** @var PriceCalculationService */
-    private $priceService;
-
-    public function __construct(PluginConfig $config, PriceCalculationService $priceService)
-    {
-        $this->config       = $config;
-        $this->priceService = $priceService;
-    }
-
     /**
-     * Wird vom Event-Dispatcher aufgerufen.
+     * Wird vom Event-Dispatcher aufgerufen, BEVOR ein Artikel in den
+     * Warenkorb gelegt wird.
      */
     public function handle(BeforeBasketItemAdd $event)
     {
         try {
+            /** @var PluginConfig $config */
+            $config = pluginApp(PluginConfig::class);
+            /** @var PriceCalculationService $priceService */
+            $priceService = pluginApp(PriceCalculationService::class);
+
             $basketItem = $event->getBasketItem();
             if ($basketItem === null) {
                 return;
@@ -48,56 +38,43 @@ class BasketItemListener
 
             $variationId = (int) $basketItem->variationId;
 
-            // Pruefen, ob das Plugin fuer diese Variation zustaendig ist
-            // (Sammelartikel ODER Test-Variation).
-            if (!$this->config->isHandledVariation($variationId)) {
+            if (!$config->isHandledVariation($variationId)) {
                 return;
             }
 
-            if ($this->config->isDebugMode()) {
+            if ($config->isDebugMode()) {
                 $this->getLogger(__METHOD__)->info(
                     'MirkaBeltCalculator: Event ausgeloest fuer behandelte Variation.',
                     [
-                        'variationId'          => $variationId,
-                        'samplingVariationId'  => $this->config->getSamplingVariationId(),
-                        'testVariationId'      => $this->config->getTestVariationId(),
-                        'isMockMode'           => $this->config->isMockMode(),
+                        'variationId'         => $variationId,
+                        'samplingVariationId' => $config->getSamplingVariationId(),
+                        'testVariationId'     => $config->getTestVariationId(),
+                        'isMockMode'          => $config->isMockMode(),
                     ]
                 );
             }
 
-            // Bestelleigenschaften (orderParams) auslesen
             $orderParams = $basketItem->basketItemOrderParams;
             if (!is_array($orderParams) || empty($orderParams)) {
                 $this->getLogger(__METHOD__)->warning(
                     'MirkaBeltCalculator: Sammelartikel ohne Bestelleigenschaften.',
                     ['variationId' => $variationId]
                 );
-                $this->setDebugInfo($basketItem, 'FEHLER: Keine Bestelleigenschaften vom Konfigurator gesendet.');
+                $this->setDebugInfo($config, $basketItem, 'FEHLER: Keine Bestelleigenschaften vom Konfigurator gesendet.');
                 return;
             }
 
-            $configData = $this->extractConfiguration($orderParams);
+            $configData = $this->extractConfiguration($config, $orderParams);
             if ($configData === null) {
                 $this->getLogger(__METHOD__)->warning(
                     'MirkaBeltCalculator: Konfiguration unvollstaendig.',
-                    [
-                        'orderParams' => $this->dumpOrderParams($orderParams),
-                        'erwarteteIds' => [
-                            'Schleifmittel' => $this->config->getPropertyIdSchleifmittel(),
-                            'Koernung'      => $this->config->getPropertyIdKoernung(),
-                            'Verbindung'    => $this->config->getPropertyIdVerbindung(),
-                            'Breite'        => $this->config->getPropertyIdBreite(),
-                            'Laenge'        => $this->config->getPropertyIdLaenge(),
-                        ],
-                    ]
+                    ['orderParams' => $this->dumpOrderParams($orderParams)]
                 );
-                $this->setDebugInfo($basketItem, 'FEHLER: Konfigurationsdaten unvollstaendig - siehe Plugin-Log.');
+                $this->setDebugInfo($config, $basketItem, 'FEHLER: Konfigurationsdaten unvollstaendig - siehe Plugin-Log.');
                 return;
             }
 
-            // Preis berechnen
-            $result = $this->priceService->calculate(
+            $result = $priceService->calculate(
                 $configData['productGroupCode'],
                 $configData['grit'],
                 $configData['jointCode'],
@@ -110,20 +87,16 @@ class BasketItemListener
                     'MirkaBeltCalculator: Preisberechnung fehlgeschlagen.',
                     $result
                 );
-                $this->setDebugInfo(
-                    $basketItem,
-                    'FEHLER: Preisberechnung fehlgeschlagen - ' . $result['detail']
-                );
+                $this->setDebugInfo($config, $basketItem, 'FEHLER: Preisberechnung fehlgeschlagen - ' . $result['detail']);
                 return;
             }
 
-            // Preis auf dem BasketItem setzen
             $basketItem->useGivenPrice = true;
             $basketItem->givenPrice    = $result['verkaufspreis'];
             $basketItem->inputWidth    = (int) $configData['width'];
             $basketItem->inputLength   = (int) $configData['length'];
 
-            if ($this->config->isDebugMode()) {
+            if ($config->isDebugMode()) {
                 $debugText = sprintf(
                     'OK | Quelle: %s | UVP: %.2f EUR | Rabatt: %.0f%% | EK: %.2f EUR | Marge: x%.2f | VK: %.2f EUR',
                     $result['source'],
@@ -133,7 +106,7 @@ class BasketItemListener
                     1 + $result['marginFactor'],
                     $result['verkaufspreis']
                 );
-                $this->setDebugInfo($basketItem, $debugText);
+                $this->setDebugInfo($config, $basketItem, $debugText);
 
                 $this->getLogger(__METHOD__)->info(
                     'MirkaBeltCalculator: Preis erfolgreich gesetzt.',
@@ -142,15 +115,11 @@ class BasketItemListener
                         'verkaufspreis' => $result['verkaufspreis'],
                         'source'        => $result['source'],
                         'uvp'           => $result['uvp'],
-                        'einkaufspreis' => $result['einkaufspreis'],
-                        'discount'      => $result['discount'],
-                        'marginFactor'  => $result['marginFactor'],
                     ]
                 );
             }
 
         } catch (\Throwable $t) {
-            // Niemals die Bestellung blockieren, falls etwas schiefgeht
             $this->getLogger(__METHOD__)->error(
                 'MirkaBeltCalculator: Exception im BasketItemListener.',
                 [
@@ -163,19 +132,13 @@ class BasketItemListener
         }
     }
 
-    /**
-     * Liest die Konfigurationsdaten aus den orderParams.
-     *
-     * @param array $orderParams  Bestelleigenschaften vom BasketItem
-     * @return array|null         Assoziatives Array oder null bei fehlenden Daten
-     */
-    private function extractConfiguration(array $orderParams)
+    private function extractConfiguration(PluginConfig $config, array $orderParams)
     {
-        $idSchleifmittel = $this->config->getPropertyIdSchleifmittel();
-        $idKoernung      = $this->config->getPropertyIdKoernung();
-        $idVerbindung    = $this->config->getPropertyIdVerbindung();
-        $idBreite        = $this->config->getPropertyIdBreite();
-        $idLaenge        = $this->config->getPropertyIdLaenge();
+        $idSchleifmittel = $config->getPropertyIdSchleifmittel();
+        $idKoernung      = $config->getPropertyIdKoernung();
+        $idVerbindung    = $config->getPropertyIdVerbindung();
+        $idBreite        = $config->getPropertyIdBreite();
+        $idLaenge        = $config->getPropertyIdLaenge();
 
         $productGroupCode = null;
         $grit             = null;
@@ -184,7 +147,6 @@ class BasketItemListener
         $length           = null;
 
         foreach ($orderParams as $param) {
-            // Plenty kann die Params als Array oder als Objekt liefern.
             if (is_object($param)) {
                 $propertyId = isset($param->propertyId) ? (int) $param->propertyId : 0;
                 $value      = isset($param->value)      ? (string) $param->value    : '';
@@ -208,13 +170,7 @@ class BasketItemListener
             }
         }
 
-        if (
-            empty($productGroupCode) ||
-            $grit <= 0 ||
-            empty($jointCode) ||
-            $width <= 0 ||
-            $length <= 0
-        ) {
+        if (empty($productGroupCode) || $grit <= 0 || empty($jointCode) || $width <= 0 || $length <= 0) {
             return null;
         }
 
@@ -227,24 +183,13 @@ class BasketItemListener
         ];
     }
 
-    /**
-     * Schreibt eine Debug-Info als zusaetzliche Bestelleigenschaft auf das
-     * BasketItem - dadurch ist sie im Warenkorb-/Auftrags-Datensatz sichtbar.
-     * Verwendet die Mirka-Artikelnummer-Property als Traeger, indem ein
-     * Hinweis dahinter angehaengt wird. Alternativ koennte man eine
-     * eigene Debug-Property anlegen.
-     *
-     * Nur aktiv im Debug-Modus.
-     */
-    private function setDebugInfo($basketItem, $message)
+    private function setDebugInfo(PluginConfig $config, $basketItem, $message)
     {
-        if (!$this->config->isDebugMode()) {
+        if (!$config->isDebugMode()) {
             return;
         }
 
-        // Wir haengen den Hinweis an die Mirka-Artikelnummer-Property an,
-        // damit man ihn im Warenkorb direkt sieht.
-        $idMirkaCode = $this->config->getPropertyIdMirkaCode();
+        $idMirkaCode = $config->getPropertyIdMirkaCode();
         $orderParams = $basketItem->basketItemOrderParams;
         if (!is_array($orderParams)) {
             return;
@@ -278,9 +223,6 @@ class BasketItemListener
         }
     }
 
-    /**
-     * Wandelt orderParams in eine kompakte Form fuer's Logging um.
-     */
     private function dumpOrderParams(array $orderParams)
     {
         $result = [];
