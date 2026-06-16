@@ -3,52 +3,40 @@
 namespace MirkaBeltCalculator\Providers;
 
 use Plenty\Plugin\ServiceProvider;
-use Plenty\Plugin\Events\Dispatcher;
 use Plenty\Plugin\Log\Loggable;
+use Plenty\Plugin\Events\Dispatcher;
 use Plenty\Modules\Basket\Events\BasketItem\BeforeBasketItemAdd;
-use MirkaBeltCalculator\Listeners\BasketItemListener;
 
 /**
- * MirkaBeltCalculatorServiceProvider
+ * MirkaBeltCalculatorServiceProvider (v1.0.8)
  *
- * Registriert den Listener fuer das BeforeBasketItemAdd-Event.
- * Wenn der Sammelartikel (Mirka Schleifband konfiguriert) in den Warenkorb
- * gelegt wird, springt der BasketItemListener an und ueberschreibt den Preis
- * mit dem dynamisch berechneten Verkaufspreis.
- *
- * Hinweis (v1.0.7): Der frueher eingebaute Header-Banner wurde komplett
- * entfernt. Er nutzte ein nicht abgesichertes Event/Methoden-Konstrukt, das
- * die boot()-Methode vorzeitig abbrechen konnte, bevor der Preis-Listener
- * registriert wurde. boot() macht jetzt nur noch zwei sichere Dinge:
- * einen Log-Eintrag schreiben und den Listener registrieren.
+ * WICHTIGE AENDERUNG: Der ServiceProvider hat jetzt KEINE eigenen
+ * Abhaengigkeiten mehr. boot() bekommt nur den Dispatcher (Plenty-Core).
+ * Der Listener wird als String registriert. Alle Service-Klassen werden
+ * NICHT mehr per Constructor-Injection geladen, sondern im Listener selbst
+ * via pluginApp() geholt. Das vermeidet eine verschachtelte DI-Kette, die
+ * Plenty's Container beim Booten still abbrechen lassen konnte.
  */
 class MirkaBeltCalculatorServiceProvider extends ServiceProvider
 {
     use Loggable;
 
-    /**
-     * Wird beim Laden des Plugins ausgefuehrt.
-     */
     public function register()
     {
         $this->getLogger(__METHOD__)->info(
-            'MirkaBeltCalculator: ServiceProvider register() wurde ausgefuehrt.'
+            'MirkaBeltCalculator: register() OK - Plugin wird geladen.'
         );
     }
 
-    /**
-     * Wird nach register() ausgefuehrt.
-     * Verbindet den Event-Listener mit dem Event.
-     */
     public function boot(Dispatcher $eventDispatcher)
     {
         $this->getLogger(__METHOD__)->info(
-            'MirkaBeltCalculator: ServiceProvider boot() wurde ausgefuehrt - Listener wird jetzt registriert.'
+            'MirkaBeltCalculator: boot() OK - Listener wird registriert.'
         );
 
         $eventDispatcher->listen(
             BeforeBasketItemAdd::class,
-            BasketItemListener::class . '@handle'
+            'MirkaBeltCalculator\\Listeners\\BasketItemListener@handle'
         );
     }
 }
