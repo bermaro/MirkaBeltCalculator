@@ -2,28 +2,38 @@
 
 namespace MirkaBeltCalculator\Listeners;
 
-use Plenty\Modules\Basket\Events\BasketItem\BeforeBasketItemAdd;
+use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
 use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.0.8)
+ * BasketItemListener (v1.1.0)
  *
- * WICHTIGE AENDERUNG: KEIN Constructor mehr. Die Abhaengigkeiten
- * (PluginConfig, PriceCalculationService) werden erst INNERHALB von handle()
- * per pluginApp() geholt. Das ist der von Plenty empfohlene Weg und vermeidet
- * die verschachtelte Constructor-DI-Kette, die das Booten verhindert hat.
+ * AENDERUNGEN ggue. v1.0.8/1.0.9:
+ * 1. Haengt jetzt am Event AfterBasketItemAdd statt BeforeBasketItemAdd
+ *    (Empfehlung Steve T. nach Debug: orderParams waren bei "Before" leer).
+ * 2. Ausfuehrliches Diagnose-Logging: Der Listener schreibt jetzt bei JEDEM
+ *    Durchlauf (sobald isDebugMode aktiv) mit, ob orderParams gefuellt sind
+ *    und ob der Preis gesetzt wurde. Damit beantwortet EIN Test zwei Fragen:
+ *      a) Sind die Bestelleigenschaften bei AfterBasketItemAdd jetzt da?
+ *      b) Greift useGivenPrice/givenPrice an dieser Stelle ueberhaupt noch?
+ * 3. Die Zeilen $basketItem->inputWidth / inputLength wurden ENTFERNT.
+ *    Das sind keine Standard-Felder des BasketItem und koennten bei "After"
+ *    Fehler werfen. Breite/Laenge stehen ohnehin in den Bestelleigenschaften.
+ *
+ * Architektur unveraendert: KEIN Constructor; Abhaengigkeiten via pluginApp()
+ * innerhalb von handle().
  */
 class BasketItemListener
 {
     use Loggable;
 
     /**
-     * Wird vom Event-Dispatcher aufgerufen, BEVOR ein Artikel in den
-     * Warenkorb gelegt wird.
+     * Wird vom Event-Dispatcher aufgerufen, NACHDEM ein Artikel in den
+     * Warenkorb gelegt wurde.
      */
-    public function handle(BeforeBasketItemAdd $event)
+    public function handle(AfterBasketItemAdd $event)
     {
         try {
             /** @var PluginConfig $config */
@@ -33,34 +43,49 @@ class BasketItemListener
 
             $basketItem = $event->getBasketItem();
             if ($basketItem === null) {
+                $this->getLogger(__METHOD__)->warning(
+                    'MirkaBeltCalculator: Kein BasketItem im Event erhalten.'
+                );
                 return;
             }
 
             $variationId = (int) $basketItem->variationId;
 
+            // Diagnose: Event wurde fuer IRGENDEINEN Artikel ausgeloest.
+            // (Hilft zu sehen, ob AfterBasketItemAdd ueberhaupt feuert.)
+            $this->getLogger(__METHOD__)->info(
+                'MirkaBeltCalculator: AfterBasketItemAdd ausgeloest.',
+                [
+                    'variationId'      => $variationId,
+                    'wirdBehandelt'    => $config->isHandledVariation($variationId),
+                ]
+            );
+
             if (!$config->isHandledVariation($variationId)) {
                 return;
             }
 
-            if ($config->isDebugMode()) {
-                $this->getLogger(__METHOD__)->info(
-                    'MirkaBeltCalculator: Event ausgeloest fuer behandelte Variation.',
-                    [
-                        'variationId'         => $variationId,
-                        'samplingVariationId' => $config->getSamplingVariationId(),
-                        'testVariationId'     => $config->getTestVariationId(),
-                        'isMockMode'          => $config->isMockMode(),
-                    ]
-                );
-            }
-
+            // -------------------------------------------------------------
+            //  Bestelleigenschaften pruefen (Kernfrage des Tests)
+            // -------------------------------------------------------------
             $orderParams = $basketItem->basketItemOrderParams;
+
+            // IMMER loggen, was wir bei "After" tatsaechlich sehen:
+            $this->getLogger(__METHOD__)->info(
+                'MirkaBeltCalculator: Zustand basketItemOrderParams bei AfterBasketItemAdd.',
+                [
+                    'istArray'    => is_array($orderParams),
+                    'anzahl'      => is_array($orderParams) ? count($orderParams) : 0,
+                    'inhalt'      => is_array($orderParams) ? $this->dumpOrderParams($orderParams) : null,
+                ]
+            );
+
             if (!is_array($orderParams) || empty($orderParams)) {
                 $this->getLogger(__METHOD__)->warning(
-                    'MirkaBeltCalculator: Sammelartikel ohne Bestelleigenschaften.',
+                    'MirkaBeltCalculator: Sammelartikel ohne Bestelleigenschaften (auch bei AfterBasketItemAdd leer).',
                     ['variationId' => $variationId]
                 );
-                $this->setDebugInfo($config, $basketItem, 'FEHLER: Keine Bestelleigenschaften vom Konfigurator gesendet.');
+                $this->setDebugInfo($config, $basketItem, 'FEHLER: Keine Bestelleigenschaften (auch nach Hinzufuegen leer).');
                 return;
             }
 
@@ -91,10 +116,23 @@ class BasketItemListener
                 return;
             }
 
+            // -------------------------------------------------------------
+            //  Preis setzen (zu verifizieren, ob das bei "After" greift)
+            // -------------------------------------------------------------
             $basketItem->useGivenPrice = true;
             $basketItem->givenPrice    = $result['verkaufspreis'];
-            $basketItem->inputWidth    = (int) $configData['width'];
-            $basketItem->inputLength   = (int) $configData['length'];
+
+            // Diagnose: protokollieren, dass wir den Preis GESETZT haben.
+            // Ob er im Warenkorb ANKOMMT, zeigt der Vergleich Shop <-> Log.
+            $this->getLogger(__METHOD__)->info(
+                'MirkaBeltCalculator: Preis im Listener gesetzt (useGivenPrice/givenPrice).',
+                [
+                    'variationId'   => $variationId,
+                    'gesetzterPreis'=> $result['verkaufspreis'],
+                    'source'        => $result['source'],
+                    'uvp'           => $result['uvp'],
+                ]
+            );
 
             if ($config->isDebugMode()) {
                 $debugText = sprintf(
@@ -107,16 +145,6 @@ class BasketItemListener
                     $result['verkaufspreis']
                 );
                 $this->setDebugInfo($config, $basketItem, $debugText);
-
-                $this->getLogger(__METHOD__)->info(
-                    'MirkaBeltCalculator: Preis erfolgreich gesetzt.',
-                    [
-                        'variationId'   => $variationId,
-                        'verkaufspreis' => $result['verkaufspreis'],
-                        'source'        => $result['source'],
-                        'uvp'           => $result['uvp'],
-                    ]
-                );
             }
 
         } catch (\Throwable $t) {
