@@ -8,22 +8,26 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.1.0)
+ * BasketItemListener (v1.1.1)
  *
- * AENDERUNGEN ggue. v1.0.8/1.0.9:
- * 1. Haengt jetzt am Event AfterBasketItemAdd statt BeforeBasketItemAdd
- *    (Empfehlung Steve T. nach Debug: orderParams waren bei "Before" leer).
- * 2. Ausfuehrliches Diagnose-Logging: Der Listener schreibt jetzt bei JEDEM
- *    Durchlauf (sobald isDebugMode aktiv) mit, ob orderParams gefuellt sind
- *    und ob der Preis gesetzt wurde. Damit beantwortet EIN Test zwei Fragen:
- *      a) Sind die Bestelleigenschaften bei AfterBasketItemAdd jetzt da?
- *      b) Greift useGivenPrice/givenPrice an dieser Stelle ueberhaupt noch?
- * 3. Die Zeilen $basketItem->inputWidth / inputLength wurden ENTFERNT.
- *    Das sind keine Standard-Felder des BasketItem und koennten bei "After"
- *    Fehler werfen. Breite/Laenge stehen ohnehin in den Bestelleigenschaften.
+ * AENDERUNG ggue. v1.1.0:
+ * Die drei WICHTIGSTEN Diagnose-Logzeilen laufen jetzt ueber error()
+ * statt info(). Grund (Hinweis Steve T.): info()/warning()/debug() werden
+ * von Plenty nur geschrieben, wenn ein Uebersetzungs-Schluessel verwendet
+ * wird UND das Log aktiviert ist. error() dagegen erscheint IMMER, ganz
+ * ohne Uebersetzungsdatei. Damit ist der Test garantiert aussagekraeftig:
+ * Wir sehen sicher, (a) ob AfterBasketItemAdd feuert, (b) ob die
+ * Bestelleigenschaften gefuellt sind und (c) ob der Preis gesetzt wurde.
  *
- * Architektur unveraendert: KEIN Constructor; Abhaengigkeiten via pluginApp()
- * innerhalb von handle().
+ * HINWEIS: error() ist hier NUR fuer die Testphase als Diagnose-Kanal
+ * "missbraucht". Es handelt sich NICHT um echte Fehler. Vor dem Go-Live
+ * werden diese Zeilen wieder entfernt oder auf info()+Translation-Key
+ * zurueckgestellt (siehe Go-Live-Checkliste).
+ *
+ * Weitere Aenderungen aus v1.1.0 bleiben:
+ * - Event AfterBasketItemAdd statt BeforeBasketItemAdd
+ * - inputWidth/inputLength entfernt
+ * - Architektur: kein Constructor, pluginApp() in handle()
  */
 class BasketItemListener
 {
@@ -43,21 +47,21 @@ class BasketItemListener
 
             $basketItem = $event->getBasketItem();
             if ($basketItem === null) {
-                $this->getLogger(__METHOD__)->warning(
-                    'MirkaBeltCalculator: Kein BasketItem im Event erhalten.'
+                // error() = garantiert sichtbar
+                $this->getLogger(__METHOD__)->error(
+                    'MirkaBeltCalculator [DIAG]: Kein BasketItem im Event erhalten.'
                 );
                 return;
             }
 
             $variationId = (int) $basketItem->variationId;
 
-            // Diagnose: Event wurde fuer IRGENDEINEN Artikel ausgeloest.
-            // (Hilft zu sehen, ob AfterBasketItemAdd ueberhaupt feuert.)
-            $this->getLogger(__METHOD__)->info(
-                'MirkaBeltCalculator: AfterBasketItemAdd ausgeloest.',
+            // DIAG 1: Feuert AfterBasketItemAdd ueberhaupt? (garantiert sichtbar)
+            $this->getLogger(__METHOD__)->error(
+                'MirkaBeltCalculator [DIAG]: AfterBasketItemAdd ausgeloest.',
                 [
-                    'variationId'      => $variationId,
-                    'wirdBehandelt'    => $config->isHandledVariation($variationId),
+                    'variationId'   => $variationId,
+                    'wirdBehandelt' => $config->isHandledVariation($variationId),
                 ]
             );
 
@@ -70,19 +74,19 @@ class BasketItemListener
             // -------------------------------------------------------------
             $orderParams = $basketItem->basketItemOrderParams;
 
-            // IMMER loggen, was wir bei "After" tatsaechlich sehen:
-            $this->getLogger(__METHOD__)->info(
-                'MirkaBeltCalculator: Zustand basketItemOrderParams bei AfterBasketItemAdd.',
+            // DIAG 2: Was steht in den orderParams bei "After"? (garantiert sichtbar)
+            $this->getLogger(__METHOD__)->error(
+                'MirkaBeltCalculator [DIAG]: Zustand basketItemOrderParams bei AfterBasketItemAdd.',
                 [
-                    'istArray'    => is_array($orderParams),
-                    'anzahl'      => is_array($orderParams) ? count($orderParams) : 0,
-                    'inhalt'      => is_array($orderParams) ? $this->dumpOrderParams($orderParams) : null,
+                    'istArray' => is_array($orderParams),
+                    'anzahl'   => is_array($orderParams) ? count($orderParams) : 0,
+                    'inhalt'   => is_array($orderParams) ? $this->dumpOrderParams($orderParams) : null,
                 ]
             );
 
             if (!is_array($orderParams) || empty($orderParams)) {
-                $this->getLogger(__METHOD__)->warning(
-                    'MirkaBeltCalculator: Sammelartikel ohne Bestelleigenschaften (auch bei AfterBasketItemAdd leer).',
+                $this->getLogger(__METHOD__)->error(
+                    'MirkaBeltCalculator [DIAG]: Sammelartikel ohne Bestelleigenschaften (auch bei After leer).',
                     ['variationId' => $variationId]
                 );
                 $this->setDebugInfo($config, $basketItem, 'FEHLER: Keine Bestelleigenschaften (auch nach Hinzufuegen leer).');
@@ -91,8 +95,8 @@ class BasketItemListener
 
             $configData = $this->extractConfiguration($config, $orderParams);
             if ($configData === null) {
-                $this->getLogger(__METHOD__)->warning(
-                    'MirkaBeltCalculator: Konfiguration unvollstaendig.',
+                $this->getLogger(__METHOD__)->error(
+                    'MirkaBeltCalculator [DIAG]: Konfiguration unvollstaendig.',
                     ['orderParams' => $this->dumpOrderParams($orderParams)]
                 );
                 $this->setDebugInfo($config, $basketItem, 'FEHLER: Konfigurationsdaten unvollstaendig - siehe Plugin-Log.');
@@ -109,7 +113,7 @@ class BasketItemListener
 
             if (!$result['success']) {
                 $this->getLogger(__METHOD__)->error(
-                    'MirkaBeltCalculator: Preisberechnung fehlgeschlagen.',
+                    'MirkaBeltCalculator [DIAG]: Preisberechnung fehlgeschlagen.',
                     $result
                 );
                 $this->setDebugInfo($config, $basketItem, 'FEHLER: Preisberechnung fehlgeschlagen - ' . $result['detail']);
@@ -122,15 +126,15 @@ class BasketItemListener
             $basketItem->useGivenPrice = true;
             $basketItem->givenPrice    = $result['verkaufspreis'];
 
-            // Diagnose: protokollieren, dass wir den Preis GESETZT haben.
+            // DIAG 3: Preis wurde im Listener gesetzt (garantiert sichtbar).
             // Ob er im Warenkorb ANKOMMT, zeigt der Vergleich Shop <-> Log.
-            $this->getLogger(__METHOD__)->info(
-                'MirkaBeltCalculator: Preis im Listener gesetzt (useGivenPrice/givenPrice).',
+            $this->getLogger(__METHOD__)->error(
+                'MirkaBeltCalculator [DIAG]: Preis im Listener gesetzt (useGivenPrice/givenPrice).',
                 [
-                    'variationId'   => $variationId,
-                    'gesetzterPreis'=> $result['verkaufspreis'],
-                    'source'        => $result['source'],
-                    'uvp'           => $result['uvp'],
+                    'variationId'    => $variationId,
+                    'gesetzterPreis' => $result['verkaufspreis'],
+                    'source'         => $result['source'],
+                    'uvp'            => $result['uvp'],
                 ]
             );
 
@@ -149,7 +153,7 @@ class BasketItemListener
 
         } catch (\Throwable $t) {
             $this->getLogger(__METHOD__)->error(
-                'MirkaBeltCalculator: Exception im BasketItemListener.',
+                'MirkaBeltCalculator [DIAG]: Exception im BasketItemListener.',
                 [
                     'exception' => get_class($t),
                     'message'   => $t->getMessage(),
