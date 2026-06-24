@@ -8,26 +8,16 @@ use Plenty\Plugin\Events\Dispatcher;
 use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
 
 /**
- * MirkaBeltCalculatorServiceProvider (v1.1.0)
+ * MirkaBeltCalculatorServiceProvider (v1.1.1)
  *
- * AENDERUNG ggue. v1.0.9:
- * Der Listener haengt jetzt am Event AfterBasketItemAdd statt
- * BeforeBasketItemAdd.
+ * Identisch zu v1.1.0: Listener haengt am Event AfterBasketItemAdd
+ * (statt BeforeBasketItemAdd), weil die Bestelleigenschaften bei "Before"
+ * leer waren (bestaetigt von Steve T. nach Debug in unserem System).
  *
- * Hintergrund (bestaetigt von Plenty/Steve T., Area Engineering Manager,
- * nach Debug in unserem System):
- * Bei BeforeBasketItemAdd waren die Bestelleigenschaften
- * ($basketItem->basketItemOrderParams) LEER - der Code stieg deshalb
- * frueh aus ("Sammelartikel ohne Bestelleigenschaften"). Steve hat
- * empfohlen, stattdessen AfterBasketItemAdd zu verwenden, weil die
- * Bestelleigenschaften zu diesem Zeitpunkt am Artikel haengen.
+ * Logging in register()/boot() weiterhin ueber Uebersetzungs-Schluessel
+ * (Debug.properties). Im Listener werden die Diagnose-Logs in v1.1.1 ueber
+ * error() geschrieben, damit sie GARANTIERT erscheinen (siehe Listener).
  *
- * WICHTIG / noch zu verifizieren: Bei AfterBasketItemAdd liegt der Artikel
- * bereits im Warenkorb. Ob useGivenPrice/givenPrice hier den Korbpreis noch
- * ueberschreibt, muss der Test zeigen. Der Listener loggt deshalb
- * ausfuehrlich, was er sieht und tut (siehe BasketItemListener v1.1.0).
- *
- * Logging weiterhin ueber Uebersetzungs-Schluessel (Debug.properties).
  * Architektur unveraendert: keine eigenen Abhaengigkeiten im
  * ServiceProvider; Listener als String registriert; Services im Listener
  * via pluginApp().
