@@ -5,35 +5,32 @@ namespace MirkaBeltCalculator\Providers;
 use Plenty\Plugin\ServiceProvider;
 use Plenty\Plugin\Log\Loggable;
 use Plenty\Plugin\Events\Dispatcher;
-use Plenty\Modules\Basket\Events\BasketItem\BeforeBasketItemAdd;
+use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
 
 /**
- * MirkaBeltCalculatorServiceProvider (v1.0.9)
+ * MirkaBeltCalculatorServiceProvider (v1.1.0)
  *
- * WICHTIGE AENDERUNG ggue. v1.0.8:
- * Die Log-Eintraege in register() und boot() verwenden jetzt
- * UEBERSETZUNGS-SCHLUESSEL statt freiem Klartext.
+ * AENDERUNG ggue. v1.0.9:
+ * Der Listener haengt jetzt am Event AfterBasketItemAdd statt
+ * BeforeBasketItemAdd.
  *
- * Hintergrund (bestaetigt von Plenty/Steve T., Area Engineering Manager):
- * Plenty schreibt Log-Eintraege der Stufen info() und debug() NUR dann,
- * wenn (a) das Log-Level fuer das Plugin aktiviert ist UND (b) als Log-Text
- * ein Uebersetzungs-Schluessel uebergeben wird, zu dem eine passende
- * .properties-Datei im Ordner resources/lang/<sprache>/ existiert.
- * Freier Klartext (wie in v1.0.8) wird bei info()/debug() still verschluckt -
- * nur error() erscheint immer. Genau deshalb blieb unser Log bisher leer,
- * obwohl der ServiceProvider moeglicherweise die ganze Zeit gebootet hat.
+ * Hintergrund (bestaetigt von Plenty/Steve T., Area Engineering Manager,
+ * nach Debug in unserem System):
+ * Bei BeforeBasketItemAdd waren die Bestelleigenschaften
+ * ($basketItem->basketItemOrderParams) LEER - der Code stieg deshalb
+ * frueh aus ("Sammelartikel ohne Bestelleigenschaften"). Steve hat
+ * empfohlen, stattdessen AfterBasketItemAdd zu verwenden, weil die
+ * Bestelleigenschaften zu diesem Zeitpunkt am Artikel haengen.
  *
- * Schluessel-Aufbau:  MirkaBeltCalculator::Debug.register
- *   - "MirkaBeltCalculator" = Plugin-Name (vor dem ::)
- *   - "Debug"               = Dateiname Debug.properties (nach dem ::, vor dem Punkt)
- *   - "register"            = Zeile/Key in der Datei (nach dem Punkt)
+ * WICHTIG / noch zu verifizieren: Bei AfterBasketItemAdd liegt der Artikel
+ * bereits im Warenkorb. Ob useGivenPrice/givenPrice hier den Korbpreis noch
+ * ueberschreibt, muss der Test zeigen. Der Listener loggt deshalb
+ * ausfuehrlich, was er sieht und tut (siehe BasketItemListener v1.1.0).
  *
- * Vorbild: https://github.com/plentymarkets/plugin-io/blob/stable/resources/lang/en/Debug.properties
- *
- * Architektur bleibt wie v1.0.8: KEINE eigenen Abhaengigkeiten im
- * ServiceProvider. boot() bekommt nur den Dispatcher (Plenty-Core). Der
- * Listener wird als String registriert; alle Service-Klassen werden im
- * Listener selbst via pluginApp() geholt (keine verschachtelte DI-Kette).
+ * Logging weiterhin ueber Uebersetzungs-Schluessel (Debug.properties).
+ * Architektur unveraendert: keine eigenen Abhaengigkeiten im
+ * ServiceProvider; Listener als String registriert; Services im Listener
+ * via pluginApp().
  */
 class MirkaBeltCalculatorServiceProvider extends ServiceProvider
 {
@@ -52,7 +49,7 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
 
     /**
      * Wird nach register() ausgefuehrt.
-     * Verbindet den Event-Listener mit dem Event.
+     * Verbindet den Event-Listener mit dem Event AfterBasketItemAdd.
      */
     public function boot(Dispatcher $eventDispatcher)
     {
@@ -62,7 +59,7 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
         );
 
         $eventDispatcher->listen(
-            BeforeBasketItemAdd::class,
+            AfterBasketItemAdd::class,
             'MirkaBeltCalculator\\Listeners\\BasketItemListener@handle'
         );
     }
