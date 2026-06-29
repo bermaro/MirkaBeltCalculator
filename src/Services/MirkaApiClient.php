@@ -123,7 +123,7 @@ class MirkaApiClient
             // 3) HTTP-Fehler (z.B. Cloud Function nicht erreichbar / 4xx / 5xx)
             if ($result['ok'] !== true) {
                 $httpCode = isset($result['httpCode']) ? $result['httpCode'] : 0;
-                $connErr  = isset($result['error']) ? (' / ' . $result['error']) : '';
+                $connErr  = isset($result['connError']) ? (' / ' . $result['connError']) : '';
                 $this->getLogger(__METHOD__)->error(
                     'MirkaBeltCalculator: HTTP-Aufruf fehlgeschlagen.',
                     ['httpCode' => $httpCode, 'connError' => $connErr]
