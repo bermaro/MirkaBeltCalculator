@@ -73,11 +73,13 @@ try {
 
 } catch (\Throwable $t) {
     // Sauber strukturierter Fehler, damit der Aufrufer ihn loggen kann.
+    // WICHTIG: Schluessel heisst 'connError' (NICHT 'error'), damit es nicht
+    // mit dem Plenty-lib-Fehlerformat ('error' => true) verwechselt wird.
     return [
-        'ok'       => false,
-        'httpCode' => 0,
-        'body'     => '',
-        'url'      => $url,
-        'error'    => $t->getMessage(),
+        'ok'        => false,
+        'httpCode'  => 0,
+        'body'      => '',
+        'url'       => $url,
+        'connError' => $t->getMessage(),
     ];
 }
