@@ -7,7 +7,7 @@ use Plenty\Modules\Plugin\Libs\Contracts\LibraryCallContract;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * MirkaApiClient (v1.3.0)
+ * MirkaApiClient (v1.3.1)
  *
  * UMBAU GEGENUEBER v1.0.8:
  * Der eigentliche HTTP-Aufruf (Guzzle) wird NICHT mehr direkt hier gemacht.
@@ -22,7 +22,24 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *  3. Hier den LibraryCallContract nutzen, um den Connector aufzurufen und
  *     Parameter zu uebergeben.
  *
- * WICHTIG: Das Rueckgabe-Format dieser Methode bleibt unveraendert
+ * KORREKTUR IN v1.3.1 (WICHTIG):
+ * Die BERMARO-Cloud-Function gibt NICHT die rohe Mirka-Antwort (mit
+ * Price.Value) zurueck, sondern ein EIGENES Objekt. Bestaetigt durch echten
+ * Test-Aufruf, Antwort z.B.:
+ *   {
+ *     "success": true, "uvp": 16.9, "verkaufspreis": 12.17,
+ *     "einkaufspreis": 8.11, "mirkaProductCode": "AB4AZT0140VT",
+ *     "productName": "...", "beltsPerPack": 5, "minimumOrderQuantity": 8, ...
+ *   }
+ * Deshalb lesen wir hier den UVP aus $data['uvp'].
+ *
+ * PREIS-LOGIK (Variante A):
+ * Wir nehmen NUR den 'uvp'. Den Verkaufspreis berechnet weiterhin der
+ * PriceCalculationService aus UVP * (1 - Rabatt) * (1 + Marge). Das von der
+ * Cloud Function mitgelieferte 'verkaufspreis'-Feld wird IGNORIERT, damit nicht
+ * doppelt gerechnet wird. (Es wird im Debug-Log nur zur Kontrolle angezeigt.)
+ *
+ * Das Rueckgabe-Format dieser Methode bleibt unveraendert
  * (['uvp' => ..., 'source' => ..., 'detail' => ...]), damit der
  * PriceCalculationService unveraendert weiterlaeuft.
  */
@@ -120,20 +137,40 @@ class MirkaApiClient
 
             if (!is_array($data)) {
                 $this->getLogger(__METHOD__)->error(
-                    'MirkaBeltCalculator: Ungueltiges JSON von der Cloud Function.'
+                    'MirkaBeltCalculator: Ungueltiges JSON von der Cloud Function.',
+                    ['body' => $body]
                 );
                 return ['uvp' => null, 'source' => 'error', 'detail' => 'Ungueltiges JSON'];
             }
 
-            // 5) UVP aus der Mirka-Antwortstruktur lesen: Price.Value
-            //    (Siehe API-Doku: Price ist ein Objekt mit Value/CurrencyIso/...)
-            if (isset($data['Price']) && is_array($data['Price']) && isset($data['Price']['Value'])) {
-                $uvp = (float) $data['Price']['Value'];
+            // Debug: kompletten Body anzeigen, damit man im Log sieht, was kam.
+            if ($config->isDebugMode()) {
+                $this->getLogger(__METHOD__)->info(
+                    'MirkaBeltCalculator: Cloud-Function-Antwort erhalten.',
+                    ['body' => $data]
+                );
+            }
+
+            // 5) HAUPTFALL: UVP aus der BERMARO-Cloud-Function-Antwort lesen.
+            //    Die Cloud Function liefert ein eigenes Objekt mit success/uvp/...
+            //    Wir nehmen NUR den uvp; den VK rechnet der PriceCalculationService.
+            if (
+                isset($data['success']) &&
+                $data['success'] === true &&
+                isset($data['uvp']) &&
+                is_numeric($data['uvp']) &&
+                (float) $data['uvp'] > 0
+            ) {
+                $uvp = (float) $data['uvp'];
 
                 if ($config->isDebugMode()) {
                     $this->getLogger(__METHOD__)->info(
-                        'MirkaBeltCalculator: UVP von API erhalten.',
-                        ['uvp' => $uvp]
+                        'MirkaBeltCalculator: UVP von Cloud Function uebernommen.',
+                        [
+                            'uvp'                 => $uvp,
+                            'verkaufspreis_cloud' => isset($data['verkaufspreis']) ? $data['verkaufspreis'] : null,
+                            'mirkaProductCode'    => isset($data['mirkaProductCode']) ? $data['mirkaProductCode'] : null,
+                        ]
                     );
                 }
 
@@ -144,10 +181,42 @@ class MirkaApiClient
                 ];
             }
 
+            // 6) NOTFALL-RUECKFALL (Guertel + Hosentraeger):
+            //    Falls die Cloud Function eines Tages doch die ROHE Mirka-Struktur
+            //    durchreichen sollte (Price.Value), fangen wir auch das ab.
+            //    Aktuell nicht der Fall, aber schadet nicht.
+            if (isset($data['Price']) && is_array($data['Price']) && isset($data['Price']['Value'])) {
+                $uvp = (float) $data['Price']['Value'];
+                if ($uvp > 0) {
+                    if ($config->isDebugMode()) {
+                        $this->getLogger(__METHOD__)->info(
+                            'MirkaBeltCalculator: UVP aus roher Mirka-Struktur (Rueckfall).',
+                            ['uvp' => $uvp]
+                        );
+                    }
+                    return [
+                        'uvp'    => $uvp,
+                        'source' => 'api',
+                        'detail' => 'Mirka-UVP ' . number_format($uvp, 2) . ' EUR (Rueckfall)',
+                    ];
+                }
+            }
+
+            // 7) Cloud Function hat geantwortet, aber ohne gueltigen UVP
+            //    (z.B. success=false, ungueltige Maße, Mirka lieferte nichts).
+            $cfMessage = '';
+            if (isset($data['success']) && $data['success'] === false && isset($data['error'])) {
+                $cfMessage = ' (' . (string) $data['error'] . ')';
+            }
             $this->getLogger(__METHOD__)->error(
-                'MirkaBeltCalculator: Antwort enthielt keinen Price.Value.'
+                'MirkaBeltCalculator: Cloud-Function-Antwort enthielt keinen gueltigen uvp.',
+                ['body' => $data]
             );
-            return ['uvp' => null, 'source' => 'error', 'detail' => 'Antwort enthielt keinen Price.Value'];
+            return [
+                'uvp'    => null,
+                'source' => 'error',
+                'detail' => 'Cloud-Function-Antwort ohne gueltigen uvp' . $cfMessage,
+            ];
 
         } catch (\Throwable $t) {
             $this->getLogger(__METHOD__)->error(
