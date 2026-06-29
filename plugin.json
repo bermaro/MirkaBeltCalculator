@@ -4,6 +4,6 @@
     "namespace": "MirkaBeltCalculator",
     "author": "BERMARO GmbH",
     "type": "template",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "serviceProvider": "MirkaBeltCalculator\\Providers\\MirkaBeltCalculatorServiceProvider"
 }
