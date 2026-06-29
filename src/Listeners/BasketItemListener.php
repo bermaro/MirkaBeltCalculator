@@ -8,26 +8,40 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.1.1)
+ * BasketItemListener (v1.2.0)
  *
- * AENDERUNG ggue. v1.1.0:
- * Die drei WICHTIGSTEN Diagnose-Logzeilen laufen jetzt ueber error()
- * statt info(). Grund (Hinweis Steve T.): info()/warning()/debug() werden
- * von Plenty nur geschrieben, wenn ein Uebersetzungs-Schluessel verwendet
- * wird UND das Log aktiviert ist. error() dagegen erscheint IMMER, ganz
- * ohne Uebersetzungsdatei. Damit ist der Test garantiert aussagekraeftig:
- * Wir sehen sicher, (a) ob AfterBasketItemAdd feuert, (b) ob die
- * Bestelleigenschaften gefuellt sind und (c) ob der Preis gesetzt wurde.
+ * ZWECK DIESER VERSION (zwei klar getrennte Aenderungen):
  *
- * HINWEIS: error() ist hier NUR fuer die Testphase als Diagnose-Kanal
- * "missbraucht". Es handelt sich NICHT um echte Fehler. Vor dem Go-Live
- * werden diese Zeilen wieder entfernt oder auf info()+Translation-Key
- * zurueckgestellt (siehe Go-Live-Checkliste).
+ * 1) QUELLE UMGESTELLT (Anweisung Steve T.):
+ *    Bisher wurde $basketItem->basketItemOrderParams gelesen. Dieses Feld war
+ *    am Interception-Punkt LEER. Steve hat bestaetigt: Die richtige Quelle ist
+ *    $basketItem->originOrderVariationProperties. Daraus liest das Plugin jetzt
+ *    die Bestelleigenschaften.
  *
- * Weitere Aenderungen aus v1.1.0 bleiben:
- * - Event AfterBasketItemAdd statt BeforeBasketItemAdd
- * - inputWidth/inputLength entfernt
- * - Architektur: kein Constructor, pluginApp() in handle()
+ * 2) VOLLSTAENDIGES DIAGNOSE-LOGGING (per error(), garantiert sichtbar):
+ *    Die neue Datenstruktur hat pro Eintrag die Felder
+ *        propertyId / type / name / value
+ *    Im Debugger tauchte zuletzt propertyId 4 (Gravur) auf, NICHT die
+ *    erwarteten IDs 64-69. Wir DUERFEN daher NICHT raten, welche propertyId
+ *    welche Eigenschaft (Qualitaet/Koernung/Verbindung/Breite/Laenge) traegt.
+ *    Deshalb schreibt dieser Listener jetzt JEDEN gefundenen Eintrag mit ALLEN
+ *    vier Feldern ins Log. Aus diesem Log lesen wir im naechsten Schritt die
+ *    echten propertyId-Zuordnungen ab und passen extractConfiguration() exakt
+ *    darauf an.
+ *
+ * WICHTIG / BEWUSSTE ENTSCHEIDUNG:
+ *    extractConfiguration() arbeitet in v1.2.0 NOCH mit den konfigurierten
+ *    IDs 64-69. Solange die echten IDs nicht feststehen, wird die Auslese
+ *    voraussichtlich "Konfiguration unvollstaendig" melden. Das ist GEWOLLT:
+ *    Erst das Test-Log liefert die echten IDs, dann erfolgt die Anpassung.
+ *    Es wird hier NICHTS geraten.
+ *
+ * HINWEIS zu error():
+ *    error() ist hier NUR fuer die Testphase als Diagnose-Kanal genutzt, weil
+ *    info()/debug() in Plenty nur mit Uebersetzungs-Schluessel schreiben.
+ *    Es handelt sich NICHT um echte Fehler. Vor dem Go-Live werden diese
+ *    Zeilen entfernt bzw. auf info()+Translation-Key zurueckgestellt
+ *    (siehe Go-Live-Checkliste).
  */
 class BasketItemListener
 {
@@ -70,36 +84,51 @@ class BasketItemListener
             }
 
             // -------------------------------------------------------------
-            //  Bestelleigenschaften pruefen (Kernfrage des Tests)
+            //  Bestelleigenschaften lesen
+            //  NEU in v1.2.0: Quelle ist originOrderVariationProperties,
+            //  NICHT mehr basketItemOrderParams (war leer).
             // -------------------------------------------------------------
-            $orderParams = $basketItem->basketItemOrderParams;
+            $orderProperties = $basketItem->originOrderVariationProperties ?? [];
 
-            // DIAG 2: Was steht in den orderParams bei "After"? (garantiert sichtbar)
+            // DIAG 2: VOLLSTAENDIGER Dump der neuen Struktur (propertyId/type/name/value).
+            // Hieraus lesen wir die echten propertyId-Zuordnungen ab.
             $this->getLogger(__METHOD__)->error(
-                'MirkaBeltCalculator [DIAG]: Zustand basketItemOrderParams bei AfterBasketItemAdd.',
+                'MirkaBeltCalculator [DIAG]: originOrderVariationProperties (VOLLDUMP).',
                 [
-                    'istArray' => is_array($orderParams),
-                    'anzahl'   => is_array($orderParams) ? count($orderParams) : 0,
-                    'inhalt'   => is_array($orderParams) ? $this->dumpOrderParams($orderParams) : null,
+                    'istArray' => is_array($orderProperties),
+                    'anzahl'   => is_array($orderProperties) ? count($orderProperties) : 0,
+                    'inhalt'   => is_array($orderProperties) ? $this->dumpProperties($orderProperties) : null,
                 ]
             );
 
-            if (!is_array($orderParams) || empty($orderParams)) {
+            if (!is_array($orderProperties) || empty($orderProperties)) {
                 $this->getLogger(__METHOD__)->error(
-                    'MirkaBeltCalculator [DIAG]: Sammelartikel ohne Bestelleigenschaften (auch bei After leer).',
+                    'MirkaBeltCalculator [DIAG]: Keine originOrderVariationProperties gefunden (leer).',
                     ['variationId' => $variationId]
                 );
-                $this->setDebugInfo($config, $basketItem, 'FEHLER: Keine Bestelleigenschaften (auch nach Hinzufuegen leer).');
+                // Kein Preis-Setzen, kein stiller 1-EUR-Artikel: hier nur Diagnose.
                 return;
             }
 
-            $configData = $this->extractConfiguration($config, $orderParams);
+            // -------------------------------------------------------------
+            //  Auslese mit den AKTUELL konfigurierten IDs (64-69).
+            //  Wird voraussichtlich null liefern, solange die echten IDs
+            //  nicht feststehen. Das ist beabsichtigt (siehe Klassen-Doc).
+            // -------------------------------------------------------------
+            $configData = $this->extractConfiguration($config, $orderProperties);
             if ($configData === null) {
                 $this->getLogger(__METHOD__)->error(
-                    'MirkaBeltCalculator [DIAG]: Konfiguration unvollstaendig.',
-                    ['orderParams' => $this->dumpOrderParams($orderParams)]
+                    'MirkaBeltCalculator [DIAG]: Konfiguration unvollstaendig mit aktuell konfigurierten IDs. '
+                    . 'Bitte VOLLDUMP oben pruefen und echte propertyId-Zuordnung ableiten.',
+                    ['erwarteteIds' => [
+                        'schleifmittel' => $config->getPropertyIdSchleifmittel(),
+                        'koernung'      => $config->getPropertyIdKoernung(),
+                        'verbindung'    => $config->getPropertyIdVerbindung(),
+                        'breite'        => $config->getPropertyIdBreite(),
+                        'laenge'        => $config->getPropertyIdLaenge(),
+                    ]]
                 );
-                $this->setDebugInfo($config, $basketItem, 'FEHLER: Konfigurationsdaten unvollstaendig - siehe Plugin-Log.');
+                // Bewusst KEIN Preis setzen -> kein falscher Preis im Warenkorb.
                 return;
             }
 
@@ -116,7 +145,7 @@ class BasketItemListener
                     'MirkaBeltCalculator [DIAG]: Preisberechnung fehlgeschlagen.',
                     $result
                 );
-                $this->setDebugInfo($config, $basketItem, 'FEHLER: Preisberechnung fehlgeschlagen - ' . $result['detail']);
+                // Bewusst KEIN Preis setzen.
                 return;
             }
 
@@ -127,7 +156,6 @@ class BasketItemListener
             $basketItem->givenPrice    = $result['verkaufspreis'];
 
             // DIAG 3: Preis wurde im Listener gesetzt (garantiert sichtbar).
-            // Ob er im Warenkorb ANKOMMT, zeigt der Vergleich Shop <-> Log.
             $this->getLogger(__METHOD__)->error(
                 'MirkaBeltCalculator [DIAG]: Preis im Listener gesetzt (useGivenPrice/givenPrice).',
                 [
@@ -137,19 +165,6 @@ class BasketItemListener
                     'uvp'            => $result['uvp'],
                 ]
             );
-
-            if ($config->isDebugMode()) {
-                $debugText = sprintf(
-                    'OK | Quelle: %s | UVP: %.2f EUR | Rabatt: %.0f%% | EK: %.2f EUR | Marge: x%.2f | VK: %.2f EUR',
-                    $result['source'],
-                    $result['uvp'],
-                    $result['discount'] * 100,
-                    $result['einkaufspreis'],
-                    1 + $result['marginFactor'],
-                    $result['verkaufspreis']
-                );
-                $this->setDebugInfo($config, $basketItem, $debugText);
-            }
 
         } catch (\Throwable $t) {
             $this->getLogger(__METHOD__)->error(
@@ -164,7 +179,15 @@ class BasketItemListener
         }
     }
 
-    private function extractConfiguration(PluginConfig $config, array $orderParams)
+    /**
+     * Liest die Konfiguration aus den originOrderVariationProperties.
+     *
+     * NEUE STRUKTUR: jeder Eintrag hat propertyId / type / name / value.
+     * Wir lesen propertyId und value; die Zuordnung erfolgt ueber die
+     * aktuell konfigurierten IDs. (Anpassung auf echte IDs folgt nach
+     * Auswertung des VOLLDUMP-Logs.)
+     */
+    private function extractConfiguration(PluginConfig $config, array $orderProperties)
     {
         $idSchleifmittel = $config->getPropertyIdSchleifmittel();
         $idKoernung      = $config->getPropertyIdKoernung();
@@ -178,16 +201,12 @@ class BasketItemListener
         $width            = null;
         $length           = null;
 
-        foreach ($orderParams as $param) {
-            if (is_object($param)) {
-                $propertyId = isset($param->propertyId) ? (int) $param->propertyId : 0;
-                $value      = isset($param->value)      ? (string) $param->value    : '';
-            } elseif (is_array($param)) {
-                $propertyId = isset($param['propertyId']) ? (int) $param['propertyId'] : 0;
-                $value      = isset($param['value'])      ? (string) $param['value']    : '';
-            } else {
-                continue;
-            }
+        foreach ($orderProperties as $prop) {
+            $propertyId = $this->readField($prop, 'propertyId');
+            $value      = $this->readField($prop, 'value');
+
+            $propertyId = (int) $propertyId;
+            $value      = (string) $value;
 
             if ($propertyId === $idSchleifmittel) {
                 $productGroupCode = trim($value);
@@ -215,61 +234,35 @@ class BasketItemListener
         ];
     }
 
-    private function setDebugInfo(PluginConfig $config, $basketItem, $message)
+    /**
+     * Liest ein Feld aus einem Eintrag, egal ob Objekt oder Array.
+     * Gibt '' zurueck, wenn das Feld fehlt.
+     */
+    private function readField($prop, $field)
     {
-        if (!$config->isDebugMode()) {
-            return;
+        if (is_object($prop)) {
+            return isset($prop->$field) ? $prop->$field : '';
         }
-
-        $idMirkaCode = $config->getPropertyIdMirkaCode();
-        $orderParams = $basketItem->basketItemOrderParams;
-        if (!is_array($orderParams)) {
-            return;
+        if (is_array($prop)) {
+            return isset($prop[$field]) ? $prop[$field] : '';
         }
-
-        $found = false;
-        foreach ($orderParams as $key => $param) {
-            if (is_object($param)) {
-                $pid = isset($param->propertyId) ? (int) $param->propertyId : 0;
-                if ($pid === $idMirkaCode) {
-                    $current = isset($param->value) ? (string) $param->value : '';
-                    $param->value = $current . ' [DEBUG: ' . $message . ']';
-                    $orderParams[$key] = $param;
-                    $found = true;
-                    break;
-                }
-            } elseif (is_array($param)) {
-                $pid = isset($param['propertyId']) ? (int) $param['propertyId'] : 0;
-                if ($pid === $idMirkaCode) {
-                    $current = isset($param['value']) ? (string) $param['value'] : '';
-                    $param['value'] = $current . ' [DEBUG: ' . $message . ']';
-                    $orderParams[$key] = $param;
-                    $found = true;
-                    break;
-                }
-            }
-        }
-
-        if ($found) {
-            $basketItem->basketItemOrderParams = $orderParams;
-        }
+        return '';
     }
 
-    private function dumpOrderParams(array $orderParams)
+    /**
+     * Erstellt einen vollstaendigen, lesbaren Dump ALLER vier Felder
+     * (propertyId / type / name / value) je Eigenschaft fuer das Log.
+     */
+    private function dumpProperties(array $orderProperties)
     {
         $result = [];
-        foreach ($orderParams as $param) {
-            if (is_object($param)) {
-                $result[] = [
-                    'propertyId' => isset($param->propertyId) ? $param->propertyId : '?',
-                    'value'      => isset($param->value)      ? $param->value      : '?',
-                ];
-            } elseif (is_array($param)) {
-                $result[] = [
-                    'propertyId' => isset($param['propertyId']) ? $param['propertyId'] : '?',
-                    'value'      => isset($param['value'])      ? $param['value']      : '?',
-                ];
-            }
+        foreach ($orderProperties as $prop) {
+            $result[] = [
+                'propertyId' => $this->readField($prop, 'propertyId'),
+                'type'       => $this->readField($prop, 'type'),
+                'name'       => $this->readField($prop, 'name'),
+                'value'      => $this->readField($prop, 'value'),
+            ];
         }
         return $result;
     }
