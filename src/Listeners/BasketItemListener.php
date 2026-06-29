@@ -202,8 +202,8 @@ class BasketItemListener
         $length           = null;
 
         foreach ($orderProperties as $prop) {
-            $propertyId = $this->readField($prop, 'propertyId');
-            $value      = $this->readField($prop, 'value');
+            $propertyId = $this->getPropertyId($prop);
+            $value      = $this->getValue($prop);
 
             $propertyId = (int) $propertyId;
             $value      = (string) $value;
@@ -238,19 +238,53 @@ class BasketItemListener
      * Liest ein Feld aus einem Eintrag, egal ob Objekt oder Array.
      * Gibt '' zurueck, wenn das Feld fehlt.
      */
-    private function readField($prop, $field)
+    /**
+     * Liest die vier bekannten Felder eines Eintrags fest aus - ohne
+     * dynamische Property-Namen und ohne Konvertierungs-Funktionen
+     * (beides ist in der Plenty-Sandbox verboten). Jeder Zugriff ist
+     * fest ausgeschrieben mit isset()-Pruefung; funktioniert sowohl fuer
+     * Objekte (->propertyId) als auch Arrays (['propertyId']).
+     */
+    private function getPropertyId($prop)
     {
-        // WICHTIG: dynamische Property-Namen ($prop->$field) sind in der
-        // Plenty-Sandbox verboten ("dynamic property names are not allowed").
-        // Deshalb wandeln wir das Objekt mit get_object_vars() in ein Array
-        // um und lesen das Feld dann ueber den Array-Schluessel. Gleiches
-        // Ergebnis, aber in Plenty erlaubt.
         if (is_object($prop)) {
-            $vars = get_object_vars($prop);
-            return isset($vars[$field]) ? $vars[$field] : '';
+            return isset($prop->propertyId) ? $prop->propertyId : '';
         }
         if (is_array($prop)) {
-            return isset($prop[$field]) ? $prop[$field] : '';
+            return isset($prop['propertyId']) ? $prop['propertyId'] : '';
+        }
+        return '';
+    }
+
+    private function getType($prop)
+    {
+        if (is_object($prop)) {
+            return isset($prop->type) ? $prop->type : '';
+        }
+        if (is_array($prop)) {
+            return isset($prop['type']) ? $prop['type'] : '';
+        }
+        return '';
+    }
+
+    private function getName($prop)
+    {
+        if (is_object($prop)) {
+            return isset($prop->name) ? $prop->name : '';
+        }
+        if (is_array($prop)) {
+            return isset($prop['name']) ? $prop['name'] : '';
+        }
+        return '';
+    }
+
+    private function getValue($prop)
+    {
+        if (is_object($prop)) {
+            return isset($prop->value) ? $prop->value : '';
+        }
+        if (is_array($prop)) {
+            return isset($prop['value']) ? $prop['value'] : '';
         }
         return '';
     }
@@ -264,10 +298,10 @@ class BasketItemListener
         $result = [];
         foreach ($orderProperties as $prop) {
             $result[] = [
-                'propertyId' => $this->readField($prop, 'propertyId'),
-                'type'       => $this->readField($prop, 'type'),
-                'name'       => $this->readField($prop, 'name'),
-                'value'      => $this->readField($prop, 'value'),
+                'propertyId' => $this->getPropertyId($prop),
+                'type'       => $this->getType($prop),
+                'name'       => $this->getName($prop),
+                'value'      => $this->getValue($prop),
             ];
         }
         return $result;
