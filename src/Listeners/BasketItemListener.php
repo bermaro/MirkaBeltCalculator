@@ -170,7 +170,7 @@ class BasketItemListener
             $this->getLogger(__METHOD__)->error(
                 'MirkaBeltCalculator [DIAG]: Exception im BasketItemListener.',
                 [
-                    'exception' => get_class($t),
+                    'exception' => 'Throwable',
                     'message'   => $t->getMessage(),
                     'file'      => $t->getFile(),
                     'line'      => $t->getLine(),
