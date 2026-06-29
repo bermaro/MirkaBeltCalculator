@@ -240,8 +240,14 @@ class BasketItemListener
      */
     private function readField($prop, $field)
     {
+        // WICHTIG: dynamische Property-Namen ($prop->$field) sind in der
+        // Plenty-Sandbox verboten ("dynamic property names are not allowed").
+        // Deshalb wandeln wir das Objekt mit get_object_vars() in ein Array
+        // um und lesen das Feld dann ueber den Array-Schluessel. Gleiches
+        // Ergebnis, aber in Plenty erlaubt.
         if (is_object($prop)) {
-            return isset($prop->$field) ? $prop->$field : '';
+            $vars = get_object_vars($prop);
+            return isset($vars[$field]) ? $vars[$field] : '';
         }
         if (is_array($prop)) {
             return isset($prop[$field]) ? $prop[$field] : '';
