@@ -18,7 +18,7 @@
         "key": "proxyUrl",
         "label": "Cloud-Function-URL (ohne / am Ende)",
         "type": "text",
-        "default": ""
+        "default": "https://mirka-belt-proxy-484917234774.europe-west1.run.app"
     },
     {
         "tab": "2. Mirka-Anbindung",
@@ -215,7 +215,7 @@
             "on": "AN (Test mit Mock-UVP)",
             "off": "AUS (echter Mirka-API-Aufruf)"
         },
-        "default": "on"
+        "default": "off"
     },
     {
         "tab": "6. Test & Debug",
