@@ -89,7 +89,14 @@ class PluginConfig
 
     public function getMarginFactor()
     {
-        return (float) $this->config->get('MirkaBeltCalculator.marginFactor', 0.5);
+        // SICHERHEITS-FIX v1.3.3: Marge wird validiert. Erlaubt ist nur
+        // 0 bis 5 (z.B. 0.5 = Faktor 1,5). Ungueltige Werte fallen auf
+        // den Standard 0.5 zurueck, damit kein absurder Preis entsteht.
+        $value = (float) $this->config->get('MirkaBeltCalculator.marginFactor', 0.5);
+        if ($value < 0 || $value > 5) {
+            $value = 0.5;
+        }
+        return $value;
     }
 
     /**
@@ -109,7 +116,15 @@ class PluginConfig
 
     public function getDefaultDiscount()
     {
-        return (float) $this->config->get('MirkaBeltCalculator.defaultDiscount', 0.52);
+        // SICHERHEITS-FIX v1.3.3: Rabatt wird validiert. Erlaubt ist nur
+        // 0 bis 0.95 (Dezimalschreibweise). Wird versehentlich z.B. "52"
+        // statt "0.52" eingetragen, wuerde 1 - 52 = -51 einen NEGATIVEN
+        // Preis erzeugen. Ungueltige Werte fallen auf 0.52 zurueck.
+        $value = (float) $this->config->get('MirkaBeltCalculator.defaultDiscount', 0.52);
+        if ($value < 0 || $value > 0.95) {
+            $value = 0.52;
+        }
+        return $value;
     }
 
     /**
@@ -124,7 +139,14 @@ class PluginConfig
             return $this->getDefaultDiscount();
         }
 
-        return (float) $value;
+        // SICHERHEITS-FIX v1.3.3: gleiche Validierung wie beim Standard-
+        // Rabatt (nur 0 bis 0.95 erlaubt, sonst Rueckfall auf Standard).
+        $value = (float) $value;
+        if ($value < 0 || $value > 0.95) {
+            return $this->getDefaultDiscount();
+        }
+
+        return $value;
     }
 
     // -----------------------------------------------------------------
@@ -149,7 +171,10 @@ class PluginConfig
 
     public function isMockMode()
     {
-        return $this->config->get('MirkaBeltCalculator.mockMode', 'on') === 'on';
+        // SICHERHEITS-FIX v1.3.3: Fallback ist jetzt 'off'. Falls Plenty die
+        // Einstellung nicht findet, laeuft das Plugin mit der ECHTEN API
+        // statt mit dem Mock-Platzhalterpreis (fail-safe fuer Live).
+        return $this->config->get('MirkaBeltCalculator.mockMode', 'off') === 'on';
     }
 
     public function getMockUvp()
