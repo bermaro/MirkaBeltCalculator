@@ -92,6 +92,21 @@ class PluginConfig
         return (float) $this->config->get('MirkaBeltCalculator.marginFactor', 0.5);
     }
 
+    /**
+     * MwSt.-Satz in Prozent (z.B. 19). Wird auf den Netto-Verkaufspreis
+     * aufgeschlagen, weil der Mirka-UVP ein NETTO-Preis ist (B2B-Preisliste)
+     * und Plenty den Warenkorb-Preis als BRUTTO interpretiert.
+     * 0 = kein Aufschlag. Unsinnige Werte werden auf 19 zurueckgesetzt.
+     */
+    public function getVatRatePercent()
+    {
+        $value = (float) $this->config->get('MirkaBeltCalculator.vatRatePercent', 19.0);
+        if ($value < 0 || $value > 30) {
+            $value = 19.0;
+        }
+        return $value;
+    }
+
     public function getDefaultDiscount()
     {
         return (float) $this->config->get('MirkaBeltCalculator.defaultDiscount', 0.52);
