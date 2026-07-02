@@ -230,5 +230,17 @@
         "label": "Mock-UVP in EUR (nur im Mock-Modus)",
         "type": "text",
         "default": "100.00"
+    },
+    {
+        "tab": "7. Positionsnamen",
+        "key": "renamePositionsMode",
+        "label": "Positionsnamen umschreiben (sprechender Name mit Qualitaet, Koernung, Verbindung, Massen, Mirka-Nr.)",
+        "type": "dropdown",
+        "possibleValues": {
+            "off": "AUS (Namen bleiben unveraendert)",
+            "log": "NUR PROTOKOLLIEREN (neue Namen nur ins Log schreiben, Auftrag unveraendert - zum Testen)",
+            "on": "AN (Namen werden in den Auftrag geschrieben)"
+        },
+        "default": "log"
     }
 ]
