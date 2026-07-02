@@ -6,13 +6,22 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use Plenty\Plugin\Log\Loggable;
 
 /**
- * PriceCalculationService (v1.0.8)
+ * PriceCalculationService (v1.0.9)
  *
  * KEIN Constructor mehr. Abhaengigkeiten werden in calculate() per
  * pluginApp() geholt, um die DI-Kette flach zu halten.
  *
- *   EK = UVP * (1 - Rabatt)
- *   VK = EK  * (1 + Margenfaktor)
+ * WICHTIG: Der Mirka-UVP aus der API ist ein NETTO-Preis (bestaetigt durch
+ * den offiziellen Mirka-Baenderrechner: "Unverbindliche Preisempfehlung
+ * ohne MwSt."). Plenty interpretiert den Warenkorb-Preis (givenPrice)
+ * als BRUTTO. Deshalb wird am Ende die MwSt. aufgeschlagen:
+ *
+ *   EK (netto)        = UVP * (1 - Rabatt)
+ *   VK (netto)        = EK  * (1 + Margenfaktor)
+ *   VK (brutto)       = VK netto * (1 + MwSt-Satz / 100)
+ *
+ * 'verkaufspreis' im Rueckgabe-Array ist der BRUTTO-Preis (fuer givenPrice).
+ * 'verkaufspreisNetto' und 'einkaufspreis' bleiben NETTO (fuer Marge/EK).
  */
 class PriceCalculationService
 {
@@ -27,6 +36,7 @@ class PriceCalculationService
 
         $discount     = $config->getDiscountForProductGroup($productGroupCode);
         $marginFactor = $config->getMarginFactor();
+        $vatRate      = $config->getVatRatePercent();
 
         $apiResult = $apiClient->fetchPrice($productGroupCode, $grit, $jointCode, $width, $length);
 
@@ -36,43 +46,52 @@ class PriceCalculationService
 
         if ($uvp === null || $uvp <= 0) {
             return [
-                'success'       => false,
-                'verkaufspreis' => null,
-                'uvp'           => null,
-                'einkaufspreis' => null,
-                'discount'      => $discount,
-                'marginFactor'  => $marginFactor,
-                'source'        => $source,
-                'detail'        => $detail,
+                'success'            => false,
+                'verkaufspreis'      => null,
+                'verkaufspreisNetto' => null,
+                'uvp'                => null,
+                'einkaufspreis'      => null,
+                'discount'           => $discount,
+                'marginFactor'       => $marginFactor,
+                'vatRatePercent'     => $vatRate,
+                'source'             => $source,
+                'detail'             => $detail,
             ];
         }
 
-        $einkaufspreis = $uvp * (1.0 - $discount);
-        $verkaufspreis = round($einkaufspreis * (1.0 + $marginFactor), 2);
+        $einkaufspreis      = $uvp * (1.0 - $discount);
+        // Netto-Verkaufspreis nach der BERMARO-Formel.
+        $verkaufspreisNetto = round($einkaufspreis * (1.0 + $marginFactor), 2);
+        // MwSt. aufschlagen -> BRUTTO-Preis fuer den Plenty-Warenkorb.
+        $verkaufspreis      = round($verkaufspreisNetto * (1.0 + $vatRate / 100.0), 2);
 
         if ($config->isDebugMode()) {
             $this->getLogger(__METHOD__)->info(
                 'MirkaBeltCalculator: Preis berechnet.',
                 [
-                    'uvp'           => $uvp,
-                    'discount'      => $discount,
-                    'marginFactor'  => $marginFactor,
-                    'einkaufspreis' => round($einkaufspreis, 2),
-                    'verkaufspreis' => $verkaufspreis,
-                    'source'        => $source,
+                    'uvp'                => $uvp,
+                    'discount'           => $discount,
+                    'marginFactor'       => $marginFactor,
+                    'vatRatePercent'     => $vatRate,
+                    'einkaufspreis'      => round($einkaufspreis, 2),
+                    'verkaufspreisNetto' => $verkaufspreisNetto,
+                    'verkaufspreisBrutto'=> $verkaufspreis,
+                    'source'             => $source,
                 ]
             );
         }
 
         return [
-            'success'       => true,
-            'verkaufspreis' => $verkaufspreis,
-            'uvp'           => $uvp,
-            'einkaufspreis' => round($einkaufspreis, 2),
-            'discount'      => $discount,
-            'marginFactor'  => $marginFactor,
-            'source'        => $source,
-            'detail'        => $detail,
+            'success'            => true,
+            'verkaufspreis'      => $verkaufspreis,
+            'verkaufspreisNetto' => $verkaufspreisNetto,
+            'uvp'                => $uvp,
+            'einkaufspreis'      => round($einkaufspreis, 2),
+            'discount'           => $discount,
+            'marginFactor'       => $marginFactor,
+            'vatRatePercent'     => $vatRate,
+            'source'             => $source,
+            'detail'             => $detail,
         ];
     }
 }
