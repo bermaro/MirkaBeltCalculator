@@ -11,6 +11,8 @@ use Plenty\Plugin\ConfigRepository;
  * Die Einstellungen werden in config.json definiert und im Plenty-Backend
  * unter "Plugins -> Plugin XYZ -> Konfigurationen" gepflegt.
  *
+ * NEU v1.4.0: Getter getRenamePositionsMode() fuer die Einstellung
+ * "Positionsnamen umschreiben" (Tab 7): 'off' / 'log' / 'on'.
  * NEU v1.3.4: Zentraler Komma-Parser parseKommaZahl(). Deutsche Eingaben
  * wie "0,52" werden jetzt korrekt als 0.52 erkannt. Vorher haette PHP
  * "0,52" per (float) einfach als 0 gelesen -> falsche Preisrechnung.
@@ -205,6 +207,27 @@ class PluginConfig
     public function getPropertyIdBreite()       { return (int) $this->config->get('MirkaBeltCalculator.propertyIdBreite',       67); }
     public function getPropertyIdLaenge()       { return (int) $this->config->get('MirkaBeltCalculator.propertyIdLaenge',       68); }
     public function getPropertyIdMirkaCode()    { return (int) $this->config->get('MirkaBeltCalculator.propertyIdMirkaCode',    69); }
+
+    // -----------------------------------------------------------------
+    //  Positionsnamen (NEU v1.4.0)
+    // -----------------------------------------------------------------
+
+    /**
+     * Modus fuer das Umschreiben der Auftrags-Positionsnamen (Tab 7).
+     * Rueckgabe ist IMMER einer der drei Werte:
+     *   'off' = Funktion aus
+     *   'log' = nur protokollieren, Auftrag unveraendert (Standard)
+     *   'on'  = Namen werden in den Auftrag geschrieben
+     * Unbekannte Werte fallen sicherheitshalber auf 'log' zurueck.
+     */
+    public function getRenamePositionsMode()
+    {
+        $wert = (string) $this->config->get('MirkaBeltCalculator.renamePositionsMode', 'log');
+        if ($wert !== 'off' && $wert !== 'log' && $wert !== 'on') {
+            $wert = 'log';
+        }
+        return $wert;
+    }
 
     // -----------------------------------------------------------------
     //  Test & Debug
