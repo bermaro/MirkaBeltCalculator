@@ -93,112 +93,112 @@
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discountAB0",
-        "label": "Abranet Max (AB0)",
+        "label": "Abranet Max (AB0) - Sonderrabatt 55% lt. Konditionsblatt 2026",
         "type": "text",
-        "default": "0.52"
+        "default": "0.55"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount330",
-        "label": "Alox (330)",
+        "label": "Alox (330) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount42A",
-        "label": "Avomax Antistatic (42A)",
+        "label": "Avomax Antistatic (42A) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount470",
-        "label": "Gold Max (470)",
+        "label": "Gold Max (470) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount5B0",
-        "label": "Hiolit JCA2A0 (5B0)",
+        "label": "Hiolit JCA2A0 (5B0) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount590",
-        "label": "Hiolit XO (590)",
+        "label": "Hiolit XO (590) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount5C0",
-        "label": "Hiolit YPZ1A0 (5C0)",
+        "label": "Hiolit YPZ1A0 (5C0) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount44A",
-        "label": "Jepuflex Antistatic (44A)",
+        "label": "Jepuflex Antistatic (44A) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discountEAB",
-        "label": "MI231A 5MIL (EAB)",
+        "label": "MI231A 5MIL (EAB) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discountFM0",
-        "label": "Microstar (FM0)",
+        "label": "Microstar (FM0) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount04A",
-        "label": "Sica Closed (04A)",
+        "label": "Sica Closed (04A) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount050",
-        "label": "Sica Fine Stearate (050)",
+        "label": "Sica Fine Stearate (050) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount490",
-        "label": "Sica Open (490)",
+        "label": "Sica Open (490) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discountUC0",
-        "label": "Ultimax (UC0) - bei Mirka klaeren!",
+        "label": "Ultimax (UC0) - Baender 45% lt. Konditionsblatt 2026 (Baender-Standard gilt NICHT fuer Ultimax)",
         "type": "text",
-        "default": "0.52"
+        "default": "0.45"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discountUB0",
-        "label": "Ultimax Black (UB0) - bei Mirka klaeren!",
+        "label": "Ultimax Black (UB0) - Baender 45% lt. Konditionsblatt 2026",
         "type": "text",
-        "default": "0.52"
+        "default": "0.45"
     },
     {
         "tab": "5. Rabatte pro Schleifmittel",
         "key": "discount110",
-        "label": "Unimax (110)",
+        "label": "Unimax (110) - Baender-Standard 52% lt. Konditionsblatt 2026",
         "type": "text",
         "default": "0.52"
     },
