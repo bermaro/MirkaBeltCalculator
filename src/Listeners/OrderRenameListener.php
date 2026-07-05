@@ -8,7 +8,7 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.4.1)
+ * OrderRenameListener (v1.4.3)
  *
  * ZWECK:
  *   Gibt den Auftragspositionen des Schleifband-Konfigurators SPRECHENDE
@@ -20,6 +20,24 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *   Zusaetzlich werden die Bestelleigenschafts-Unterzeilen (bisher nur
  *   "Schleifband") umbenannt in "Name: Wert", z. B.
  *       "Schleifband Qualitaet: AB0".
+ *
+ * AENDERUNGEN v1.4.3 (nach Praxistest Auftrag 327754):
+ *   1) DIAGNOSE-ROENTGENBLICK: Der Praxistest zeigte, dass dieses System
+ *      an der offiziell dokumentierten Wert-Stelle (Unterfeld typeId 82)
+ *      die NAMEN der Eigenschaften liefert statt der Kundenwerte -
+ *      dasselbe Muster wie zuvor im EmailBuilder. Wo die echten Werte
+ *      (AB0, 60, T, ...) am Auftrag liegen, verraet nur das System
+ *      selbst. Deshalb schreibt der Listener im Modus "NUR
+ *      PROTOKOLLIEREN" jetzt einen VOLLSTAENDIGEN Diagnose-Dump ins
+ *      Log: fuer jede Typ-15-Zeile den eigenen Positionsnamen, ALLE
+ *      Unterfelder (typeId => Inhalt) und alle orderProperties, dazu
+ *      die orderProperties der Hauptposition. Ein Testbestellungs-Log
+ *      zeigt damit exakt, in welchem Feld die Kundenwerte stecken.
+ *   2) MEHRZEILIGER NAME (Wunsch Bernd): Der neue Positionsname wird
+ *      mit Zeilenumbruechen aufgebaut (Qualitaet / Koernung+Verbindung /
+ *      Mass / Mirka-Nr. untereinander). Ob jedes Dokument die
+ *      Umbrueche darstellt, zeigt der Test - sonst Umstellung auf
+ *      Trennzeichen.
  *
  * AENDERUNGEN v1.4.1 (nach externem Code-Review):
  *   1) AUFTRAG NEU LADEN: Der Listener vertraut nicht mehr dem
@@ -159,6 +177,63 @@ class OrderRenameListener
                 . count($hauptPositionen) . ' Konfigurator-Position(en), '
                 . count($eigenschaftsZeilen) . ' Eigenschafts-Zeile(n), Modus=' . $modus);
 
+            // ---------------------------------------------------------
+            // NEU v1.4.3: DIAGNOSE-ROENTGENBLICK (nur im Modus 'log').
+            // Schreibt fuer jede Eigenschafts-Zeile und jede Haupt-
+            // position ALLE verfuegbaren Felder ins Log, damit wir
+            // sehen, wo dieses System die Kundenwerte wirklich ablegt.
+            // ---------------------------------------------------------
+            if ($modus === 'log') {
+                foreach ($eigenschaftsZeilen as $zeile) {
+                    $this->diag('[DIAG][Rename][DUMP] Zeile ' . (int) $zeile->id
+                        . ' | eigener Name: "' . (string) $zeile->orderItemName . '"');
+                    try {
+                        foreach ($zeile->properties as $eigenschaft) {
+                            $this->diag('[DIAG][Rename][DUMP]   Unterfeld typeId='
+                                . (int) $eigenschaft->typeId
+                                . ' value="' . (string) $eigenschaft->value . '"');
+                        }
+                    } catch (\Throwable $egal) {
+                        $this->diag('[DIAG][Rename][DUMP]   (Unterfelder nicht lesbar: '
+                            . $egal->getMessage() . ')');
+                    }
+                    try {
+                        foreach ($zeile->orderProperties as $op) {
+                            $this->diag('[DIAG][Rename][DUMP]   orderProperty propertyId='
+                                . (int) $op->propertyId
+                                . ' value="' . (string) $op->value . '"');
+                        }
+                    } catch (\Throwable $egal) {
+                        $this->diag('[DIAG][Rename][DUMP]   (orderProperties nicht lesbar: '
+                            . $egal->getMessage() . ')');
+                    }
+                }
+                foreach ($hauptPositionen as $hauptId => $position) {
+                    $this->diag('[DIAG][Rename][DUMP] Hauptposition ' . (int) $hauptId
+                        . ' | Name: "' . (string) $position->orderItemName . '"');
+                    try {
+                        foreach ($position->orderProperties as $op) {
+                            $this->diag('[DIAG][Rename][DUMP]   orderProperty propertyId='
+                                . (int) $op->propertyId
+                                . ' value="' . (string) $op->value . '"');
+                        }
+                    } catch (\Throwable $egal) {
+                        $this->diag('[DIAG][Rename][DUMP]   (orderProperties nicht lesbar: '
+                            . $egal->getMessage() . ')');
+                    }
+                    try {
+                        foreach ($position->properties as $eigenschaft) {
+                            $this->diag('[DIAG][Rename][DUMP]   Unterfeld typeId='
+                                . (int) $eigenschaft->typeId
+                                . ' value="' . (string) $eigenschaft->value . '"');
+                        }
+                    } catch (\Throwable $egal) {
+                        $this->diag('[DIAG][Rename][DUMP]   (Unterfelder nicht lesbar: '
+                            . $egal->getMessage() . ')');
+                    }
+                }
+            }
+
             // -----------------------------------------------------------
             // Schritt 2: Werte je Hauptposition sammeln - aus MEHREREN
             // Quellen (Review-Punkt 2). Jeder Fund wird mit Quelle geloggt.
@@ -284,11 +359,13 @@ class OrderRenameListener
                     ? self::QUALITAETS_NAMEN[$code] . ' '
                     : '';
 
+                // NEU v1.4.3: mehrzeiliger Aufbau (Wunsch Bernd) -
+                // jede Angabe in einer eigenen Zeile.
                 $neuerName = 'Mirka Schleifband ' . $qualitaetsName
-                    . '(' . $code . '), P' . $grit
-                    . ', Verbindung ' . $joint
-                    . ', ' . $breite . ' x ' . $laenge . ' mm'
-                    . ($mirkaNr !== '' ? ', Mirka-Nr. ' . $mirkaNr : '');
+                    . '(' . $code . ')' . "\n"
+                    . 'Körnung: P' . $grit . ' · Verbindung: ' . $joint . "\n"
+                    . 'Maß: ' . $breite . ' x ' . $laenge . ' mm'
+                    . ($mirkaNr !== '' ? "\n" . 'Mirka-Nr.: ' . $mirkaNr : '');
 
                 $neueNamen[$hauptId] = $neuerName;
 
