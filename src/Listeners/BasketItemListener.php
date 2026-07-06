@@ -3,12 +3,23 @@
 namespace MirkaBeltCalculator\Listeners;
 
 use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
+use Plenty\Modules\Frontend\Session\Storage\Contracts\FrontendSessionStorageFactoryContract;
 use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.2.0)
+ * BasketItemListener (v1.3.0)
+ *
+ * NEU v1.3.0 - "ZETTEL FUER DEN UMBENENNER" (06.07.2026):
+ *    Der Roentgen-Test (Auftrag 327788) hat bewiesen, dass Plenty die
+ *    Kundenwerte (AB0, 60, T, ...) NICHT am Auftrag speichert. Dieser
+ *    Listener hat die Werte aber nachweislich in perfekter Form
+ *    (originOrderVariationProperties). Deshalb legt er sie nach dem
+ *    Preis-Setzen als "Zettel" in der Kunden-Sitzung ab (Schluessel
+ *    'mirkaKonfigListe', JSON-Liste). Der OrderRenameListener liest den
+ *    Zettel beim Auftrags-Anlegen (gleicher Kundenbesuch = gleiche
+ *    Sitzung) und kann damit die Positionsnamen korrekt beschriften.
  *
  * ZWECK DIESER VERSION (zwei klar getrennte Aenderungen):
  *
@@ -166,6 +177,18 @@ class BasketItemListener
                 ]
             );
 
+            // NEU v1.3.0: "Zettel fuer den Umbenenner" - die Kundenwerte in
+            // der Sitzung ablegen (am Auftrag speichert Plenty sie nicht).
+            // Fehler hier duerfen den Kauf NIEMALS stoeren -> eigenes try.
+            try {
+                $this->merkeKonfigurationFuerRename($orderProperties, (float) $result['verkaufspreis']);
+            } catch (\Throwable $egal) {
+                $this->getLogger(__METHOD__)->error(
+                    'MirkaBeltCalculator [DIAG]: Zettel konnte nicht gespeichert werden.',
+                    ['message' => $egal->getMessage()]
+                );
+            }
+
         } catch (\Throwable $t) {
             $this->getLogger(__METHOD__)->error(
                 'MirkaBeltCalculator [DIAG]: Exception im BasketItemListener.',
@@ -177,6 +200,59 @@ class BasketItemListener
                 ]
             );
         }
+    }
+
+    /**
+     * NEU v1.3.0: Legt die sechs Kundenwerte als "Zettel" in der
+     * Kunden-Sitzung ab, damit der OrderRenameListener sie beim
+     * Auftrags-Anlegen wiederfindet. Es wird eine LISTE gefuehrt
+     * (JSON), damit auch mehrere Konfigurator-Positionen in einem
+     * Warenkorb funktionieren. Nur die letzten 10 Eintraege werden
+     * behalten (Speicher-Hygiene).
+     */
+    private function merkeKonfigurationFuerRename(array $orderProperties, $preis)
+    {
+        /** @var FrontendSessionStorageFactoryContract $sessionFactory */
+        $sessionFactory = pluginApp(FrontendSessionStorageFactoryContract::class);
+        $ablage = $sessionFactory->getPlugin();
+
+        // Bisherige Liste lesen (JSON-Text) und neuen Eintrag anhaengen.
+        $roh   = (string) $ablage->getValue('mirkaKonfigListe');
+        $liste = [];
+        if ($roh !== '') {
+            $dekodiert = json_decode($roh, true);
+            if (is_array($dekodiert)) {
+                $liste = $dekodiert;
+            }
+        }
+
+        $eintrag = [
+            'preis' => (float) $preis,
+            'zeit'  => time(),
+            'werte' => [],
+        ];
+        foreach ($orderProperties as $prop) {
+            $propertyId = (int) $this->getPropertyId($prop);
+            $wert       = (string) $this->getValue($prop);
+            if ($propertyId > 0) {
+                $eintrag['werte'][(string) $propertyId] = $wert;
+            }
+        }
+        $liste[] = $eintrag;
+
+        if (count($liste) > 10) {
+            $liste = array_slice($liste, -10);
+        }
+        $ablage->setValue('mirkaKonfigListe', json_encode($liste));
+
+        $this->getLogger(__METHOD__)->error(
+            'MirkaBeltCalculator [DIAG]: Zettel fuer Umbenenner in Sitzung gespeichert.',
+            [
+                'anzahlEintraege' => count($liste),
+                'preis'           => (float) $preis,
+                'werte'           => $eintrag['werte'],
+            ]
+        );
     }
 
     /**
