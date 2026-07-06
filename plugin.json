@@ -4,7 +4,7 @@
     "namespace": "MirkaBeltCalculator",
     "author": "BERMARO GmbH",
     "type": "template",
-    "version": "1.4.3",
+    "version": "1.4.4",
     "serviceProvider": "MirkaBeltCalculator\\Providers\\MirkaBeltCalculatorServiceProvider",
     "dependencies": {
         "guzzlehttp/guzzle": "6.3.*"
