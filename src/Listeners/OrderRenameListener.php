@@ -4,11 +4,27 @@ namespace MirkaBeltCalculator\Listeners;
 
 use Plenty\Modules\Order\Events\OrderCreated;
 use Plenty\Modules\Order\Contracts\OrderRepositoryContract;
+use Plenty\Modules\Frontend\Session\Storage\Contracts\FrontendSessionStorageFactoryContract;
 use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.4.3)
+ * OrderRenameListener (v1.4.4)
+ *
+ * AENDERUNGEN v1.4.4 (nach Roentgen-Auswertung Auftrag 327788, 06.07.2026):
+ *   ERKENNTNIS: Der Auftrag wurde nachweislich MIT Relationen geladen,
+ *   und trotzdem waren alle orderProperties LEER; Unterfeld typeId 82
+ *   enthaelt in diesem System die BESCHRIFTUNG ("Schleifband Koernung"),
+ *   nicht den Kundenwert. Plenty speichert die Kundenwerte also GAR NICHT
+ *   am Auftrag.
+ *   LOESUNG ("Zettel-Prinzip", Idee Bernd): Der BasketItemListener
+ *   (ab v1.3.0) legt die Kundenwerte beim In-den-Warenkorb-Legen als
+ *   Zettel in der Kunden-Sitzung ab ('mirkaKonfigListe'). Der Auftrag
+ *   entsteht im selben Kundenbesuch -> dieser Listener liest den Zettel
+ *   (neue QUELLE Z, fuehrend) und beschriftet damit die Positionen.
+ *   AUSSERDEM: Unterfeld typeId 82 wird NIE mehr als Wert benutzt
+ *   (Ursache des Kauderwelsch-Namens in Auftrag 327754); aus den
+ *   Typ-15-Zeilen wird nur noch die Eigenschafts-ID (Feld 81) gelesen.
  *
  * ZWECK:
  *   Gibt den Auftragspositionen des Schleifband-Konfigurators SPRECHENDE
@@ -265,7 +281,11 @@ class OrderRenameListener
                     continue; // Gehoert nicht zu unserem Artikel.
                 }
 
-                // Quelle A: Unterfelder der Typ-15-Zeile (typeId 81/82).
+                // Quelle A: Unterfelder der Typ-15-Zeile.
+                // NUR noch Feld 81 (Eigenschafts-ID) wird gelesen!
+                // Feld 82 enthaelt in diesem System die BESCHRIFTUNG,
+                // nicht den Wert (bewiesen im Roentgen-Test 06.07.2026)
+                // und wird deshalb bewusst ignoriert.
                 $eigenschaftsId = 0;
                 $wert           = '';
                 try {
@@ -273,14 +293,12 @@ class OrderRenameListener
                         $propTyp = (int) $eigenschaft->typeId;
                         if ($propTyp === self::PROP_TYP_EIGENSCHAFTS_ID) {
                             $eigenschaftsId = (int) $eigenschaft->value;
-                        } elseif ($propTyp === self::PROP_TYP_WERT) {
-                            $wert = trim((string) $eigenschaft->value);
                         }
                     }
                 } catch (\Throwable $egal) {
                     // properties nicht lesbar -> Quelle B versuchen.
                 }
-                $quelle = 'A(properties 81/82)';
+                $quelle = 'A(nur Feld 81, ohne Wert)';
 
                 // Quelle B: orderProperties der Typ-15-Zeile.
                 if ($eigenschaftsId === 0) {
@@ -306,9 +324,10 @@ class OrderRenameListener
                         'eigenschaftsId' => $eigenschaftsId,
                         'wert'           => $wert,
                     ];
-                    $this->diag('[DIAG][Rename] Wert gefunden (' . $quelle . '): '
-                        . 'Eigenschaft ' . $eigenschaftsId . ' = "' . $wert
-                        . '" (Zeile ' . (int) $zeile->id . ' -> Haupt ' . $hauptId . ')');
+                    $this->diag('[DIAG][Rename] Zeile erkannt (' . $quelle . '): '
+                        . 'Eigenschaft ' . $eigenschaftsId
+                        . ($wert !== '' ? ' = "' . $wert . '"' : ' (Wert folgt vom Zettel)')
+                        . ' (Zeile ' . (int) $zeile->id . ' -> Haupt ' . $hauptId . ')');
                 }
             }
 
@@ -329,6 +348,15 @@ class OrderRenameListener
                     // Relation existiert hier nicht - kein Problem.
                 }
             }
+
+            // -----------------------------------------------------------
+            // NEU v1.4.4 - QUELLE Z ("Zettel aus der Kunden-Sitzung"):
+            // Der BasketItemListener hat die Kundenwerte beim In-den-
+            // Warenkorb-Legen dort abgelegt. Diese Quelle ist FUEHREND
+            // und ueberschreibt alles Bisherige (am Auftrag selbst
+            // speichert Plenty die Werte nachweislich nicht).
+            // -----------------------------------------------------------
+            $this->uebernehmeZettelWerte($hauptPositionen, $werte);
 
             // -----------------------------------------------------------
             // Schritt 3: Neue Namen bauen.
@@ -376,9 +404,12 @@ class OrderRenameListener
                         (int) $eintrag['eigenschaftsId'],
                         $config
                     );
-                    if ($label !== '' && $eintrag['wert'] !== '') {
+                    // NEU v1.4.4: Wert kommt aus der Werte-Sammlung
+                    // (Zettel), NICHT mehr aus Feld 82 der Zeile.
+                    $zeilenWert = $this->holeWert($w, (int) $eintrag['eigenschaftsId']);
+                    if ($label !== '' && $zeilenWert !== '') {
                         $neueNamen[(int) $eintrag['positionsId']] =
-                            $label . ': ' . $eintrag['wert'];
+                            $label . ': ' . $zeilenWert;
                     }
                 }
             }
@@ -528,6 +559,78 @@ class OrderRenameListener
             // Betraege nicht lesbar - Vergleich entfaellt.
         }
         return '';
+    }
+
+    /**
+     * NEU v1.4.4: Liest den "Zettel" des BasketItemListeners aus der
+     * Kunden-Sitzung und traegt die Kundenwerte in die Werte-Sammlung
+     * ein (fuehrende Quelle Z).
+     *
+     * Zuordnung bei MEHREREN Konfigurator-Positionen: Die Haupt-
+     * positionen werden chronologisch sortiert (kleinste Positions-ID
+     * zuerst); die Zettel-Liste ist ebenfalls chronologisch. Die
+     * LETZTEN n Zettel gehoeren zu den n Positionen, der Reihe nach.
+     * Verbrauchte Zettel werden aus der Sitzung entfernt.
+     *
+     * Fehler stoeren den Bestellabschluss NIE (eigenes try/catch);
+     * ohne Zettel bleibt der Name einfach unveraendert (fail-safe).
+     *
+     * @param array $hauptPositionen  hauptId => Position
+     * @param array $werte            (per Referenz) hauptId => [propId => Wert]
+     */
+    private function uebernehmeZettelWerte($hauptPositionen, &$werte)
+    {
+        try {
+            /** @var FrontendSessionStorageFactoryContract $sessionFactory */
+            $sessionFactory = pluginApp(FrontendSessionStorageFactoryContract::class);
+            $ablage = $sessionFactory->getPlugin();
+
+            $roh   = (string) $ablage->getValue('mirkaKonfigListe');
+            $liste = ($roh !== '') ? json_decode($roh, true) : [];
+            if (!is_array($liste) || count($liste) === 0) {
+                $this->diag('[DIAG][Rename] Kein Zettel in der Sitzung gefunden - '
+                    . 'Namen bleiben ggf. unveraendert (fail-safe).');
+                return;
+            }
+
+            $hauptIds = array_keys($hauptPositionen);
+            sort($hauptIds);
+            $n = count($hauptIds);
+
+            if (count($liste) < $n) {
+                $this->diag('[DIAG][Rename] ⚠️ Weniger Zettel (' . count($liste)
+                    . ') als Konfigurator-Positionen (' . $n
+                    . ') - Zettel-Zuordnung uebersprungen (fail-safe).');
+                return;
+            }
+
+            // Die letzten n Zettel gehoeren zu den n Positionen.
+            $passende = array_slice($liste, -$n);
+
+            foreach ($hauptIds as $index => $hauptId) {
+                $eintrag  = $passende[$index];
+                $werteMap = (isset($eintrag['werte']) && is_array($eintrag['werte']))
+                    ? $eintrag['werte']
+                    : [];
+                foreach ($werteMap as $propertyId => $wert) {
+                    $pid = (int) $propertyId;
+                    if ($pid > 0) {
+                        $werte[$hauptId][$pid] = trim((string) $wert);
+                    }
+                }
+                $this->diag('[DIAG][Rename] Werte uebernommen (Z(Sitzungs-Zettel)): '
+                    . count($werteMap) . ' Wert(e) fuer Haupt ' . (int) $hauptId
+                    . ' (Zettel-Preis: '
+                    . (isset($eintrag['preis']) ? $eintrag['preis'] : '?') . ')');
+            }
+
+            // Verbrauchte Zettel entfernen, Rest zurueckschreiben.
+            $rest = array_slice($liste, 0, count($liste) - $n);
+            $ablage->setValue('mirkaKonfigListe', count($rest) > 0 ? json_encode($rest) : '');
+        } catch (\Throwable $fehler) {
+            $this->diag('[DIAG][Rename] Zettel-Lesen fehlgeschlagen: '
+                . $fehler->getMessage());
+        }
     }
 
     /**
