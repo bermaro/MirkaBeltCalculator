@@ -9,7 +9,13 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.4.5)
+ * OrderRenameListener (v1.4.6)
+ *
+ * AENDERUNG v1.4.6 (07.07.2026, Wunsch Bernd):
+ * Die Unterzeile "Schleifband Qualität" zeigt jetzt den ausgeschriebenen
+ * Qualitaetsnamen mit Code, z.B. "Schleifband Qualität: ABRANET MAX (AB0)"
+ * statt nur "AB0". Der gespeicherte Eigenschafts-WERT (fuer Mirka/
+ * Fertigung) bleibt unveraendert der reine Code.
  *
  * KORREKTUR 06.07.2026 (Deploy-Fehler): Die PHP-Funktion abs ist in
  * der Plenty-Sandbox verboten ("php function 'abs' is not allowed").
@@ -426,6 +432,19 @@ class OrderRenameListener
                     // NEU v1.4.4: Wert kommt aus der Werte-Sammlung
                     // (Zettel), NICHT mehr aus Feld 82 der Zeile.
                     $zeilenWert = $this->holeWert($w, (int) $eintrag['eigenschaftsId']);
+
+                    // NEU v1.4.6 (Wunsch Bernd): Bei der Qualitaets-Zeile
+                    // den ausgeschriebenen Namen mit ausgeben, z.B.
+                    // "Schleifband Qualität: ABRANET MAX (AB0)" statt nur
+                    // "AB0". Fuer den Kunden verstaendlicher; der
+                    // gespeicherte Eigenschafts-WERT selbst (fuer Mirka/
+                    // Fertigung) bleibt unveraendert "AB0".
+                    if ((int) $eintrag['eigenschaftsId'] === (int) $config->getPropertyIdSchleifmittel()
+                        && isset(self::QUALITAETS_NAMEN[$zeilenWert])) {
+                        $zeilenWert = self::QUALITAETS_NAMEN[$zeilenWert]
+                            . ' (' . $zeilenWert . ')';
+                    }
+
                     if ($label !== '' && $zeilenWert !== '') {
                         $neueNamen[(int) $eintrag['positionsId']] =
                             $label . ': ' . $zeilenWert;
