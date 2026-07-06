@@ -11,6 +11,11 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 /**
  * OrderRenameListener (v1.4.5)
  *
+ * KORREKTUR 06.07.2026 (Deploy-Fehler): Die PHP-Funktion abs ist in
+ * der Plenty-Sandbox verboten ("php function 'abs' is not allowed").
+ * Der Preis-Toleranzvergleich rechnet die Differenz jetzt selbst aus
+ * (Vorzeichen manuell drehen) - gleiche Logik, ohne abs.
+ *
  * AENDERUNGEN v1.4.5 (Zuordnungs-Absicherung, Hinweis aus Code-Review):
  *   RISIKO vorher: Legt ein Kunde Band A und Band B in den Warenkorb,
  *   loescht B wieder und bestellt nur A, dann war der LETZTE Zettel in
@@ -632,10 +637,19 @@ class OrderRenameListener
                         }
                         $zettelPreis = isset($liste[$i]['preis'])
                             ? (float) $liste[$i]['preis'] : null;
-                        if ($zettelPreis !== null
-                            && abs($zettelPreis - $posPreis) < 0.005) {
-                            $gewaehlterIndex = $i;
-                            break;
+                        if ($zettelPreis !== null) {
+                            // Preis-Abstand OHNE die abs-Funktion berechnen, denn diese
+                            // ist in der Plenty-Sandbox verboten (Deploy-Fehler
+                            // 06.07.2026). Gleiche Mathematik: Differenz bilden
+                            // und bei negativem Ergebnis das Vorzeichen drehen.
+                            $differenz = $zettelPreis - $posPreis;
+                            if ($differenz < 0) {
+                                $differenz = -$differenz;
+                            }
+                            if ($differenz < 0.005) {
+                                $gewaehlterIndex = $i;
+                                break;
+                            }
                         }
                     }
                     if ($gewaehlterIndex < 0) {
