@@ -9,7 +9,21 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.4.4)
+ * OrderRenameListener (v1.4.5)
+ *
+ * AENDERUNGEN v1.4.5 (Zuordnungs-Absicherung, Hinweis aus Code-Review):
+ *   RISIKO vorher: Legt ein Kunde Band A und Band B in den Warenkorb,
+ *   loescht B wieder und bestellt nur A, dann war der LETZTE Zettel in
+ *   der Sitzung der von B -> Position A haette den falschen Namen
+ *   bekommen. Das waeren falsche Fertigungsdaten!
+ *   ABSICHERUNG jetzt: Jeder Zettel traegt den Brutto-Verkaufspreis.
+ *   Der Umbenenner liest den Brutto-Einzelpreis der Auftragsposition
+ *   und ordnet einen Zettel NUR zu, wenn die Preise uebereinstimmen
+ *   (Toleranz 0,005 EUR; Suche vom neuesten Zettel rueckwaerts).
+ *   Ist der Positionspreis nicht lesbar, wird nur der voellig
+ *   eindeutige Fall zugelassen (genau 1 Position + genau 1 Zettel).
+ *   In JEDEM Zweifelsfall gilt fail-safe: lieber der alte, generische
+ *   Name als ein falscher.
  *
  * AENDERUNGEN v1.4.4 (nach Roentgen-Auswertung Auftrag 327788, 06.07.2026):
  *   ERKENNTNIS: Der Auftrag wurde nachweislich MIT Relationen geladen,
@@ -562,18 +576,23 @@ class OrderRenameListener
     }
 
     /**
-     * NEU v1.4.4: Liest den "Zettel" des BasketItemListeners aus der
+     * v1.4.4/v1.4.5: Liest den "Zettel" des BasketItemListeners aus der
      * Kunden-Sitzung und traegt die Kundenwerte in die Werte-Sammlung
      * ein (fuehrende Quelle Z).
      *
-     * Zuordnung bei MEHREREN Konfigurator-Positionen: Die Haupt-
-     * positionen werden chronologisch sortiert (kleinste Positions-ID
-     * zuerst); die Zettel-Liste ist ebenfalls chronologisch. Die
-     * LETZTEN n Zettel gehoeren zu den n Positionen, der Reihe nach.
-     * Verbrauchte Zettel werden aus der Sitzung entfernt.
-     *
-     * Fehler stoeren den Bestellabschluss NIE (eigenes try/catch);
-     * ohne Zettel bleibt der Name einfach unveraendert (fail-safe).
+     * NEU v1.4.5 - ZUORDNUNG MIT PREIS-GEGENCHECK:
+     * Jeder Zettel traegt den Brutto-Verkaufspreis seiner Konfiguration.
+     * Ein Zettel wird einer Auftragsposition nur zugeordnet, wenn sein
+     * Preis zum Brutto-Einzelpreis der Position passt (Toleranz 0,005
+     * EUR), gesucht wird vom NEUESTEN Zettel rueckwaerts. So bekommt
+     * z. B. nach "A rein, B rein, B geloescht, A bestellt" die Position
+     * A trotzdem den richtigen Zettel A (der Zettel von B passt nicht
+     * zum Preis von A - ausser beide kosten exakt gleich viel, dann
+     * waere auch die Konfiguration praktisch identisch teuer; dieses
+     * Restrisiko ist dokumentiert und akzeptiert).
+     * Ist der Positionspreis nicht lesbar, wird NUR der voellig
+     * eindeutige Fall zugelassen: genau 1 Position UND genau 1 Zettel.
+     * Fail-safe in jedem Zweifelsfall: Name bleibt unveraendert.
      *
      * @param array $hauptPositionen  hauptId => Position
      * @param array $werte            (per Referenz) hauptId => [propId => Wert]
@@ -595,20 +614,53 @@ class OrderRenameListener
 
             $hauptIds = array_keys($hauptPositionen);
             sort($hauptIds);
-            $n = count($hauptIds);
 
-            if (count($liste) < $n) {
-                $this->diag('[DIAG][Rename] ⚠️ Weniger Zettel (' . count($liste)
-                    . ') als Konfigurator-Positionen (' . $n
-                    . ') - Zettel-Zuordnung uebersprungen (fail-safe).');
-                return;
-            }
+            $benutzteIndizes = [];
 
-            // Die letzten n Zettel gehoeren zu den n Positionen.
-            $passende = array_slice($liste, -$n);
+            foreach ($hauptIds as $hauptId) {
+                $position = $hauptPositionen[$hauptId];
+                $posPreis = $this->leseBruttoEinzelpreis($position);
 
-            foreach ($hauptIds as $index => $hauptId) {
-                $eintrag  = $passende[$index];
+                $gewaehlterIndex = -1;
+
+                if ($posPreis !== null) {
+                    // Preis lesbar: vom NEUESTEN Zettel rueckwaerts den
+                    // ersten unbenutzten mit passendem Preis suchen.
+                    for ($i = count($liste) - 1; $i >= 0; $i--) {
+                        if (isset($benutzteIndizes[$i])) {
+                            continue;
+                        }
+                        $zettelPreis = isset($liste[$i]['preis'])
+                            ? (float) $liste[$i]['preis'] : null;
+                        if ($zettelPreis !== null
+                            && abs($zettelPreis - $posPreis) < 0.005) {
+                            $gewaehlterIndex = $i;
+                            break;
+                        }
+                    }
+                    if ($gewaehlterIndex < 0) {
+                        $this->diag('[DIAG][Rename] ⚠️ Kein Zettel passt zum '
+                            . 'Positionspreis ' . $posPreis . ' (Haupt ' . (int) $hauptId
+                            . ') - Position wird uebersprungen (fail-safe).');
+                        continue;
+                    }
+                } else {
+                    // Preis NICHT lesbar: nur den voellig eindeutigen
+                    // Fall zulassen (1 Position, 1 Zettel).
+                    if (count($hauptIds) === 1 && count($liste) === 1) {
+                        $gewaehlterIndex = 0;
+                        $this->diag('[DIAG][Rename] Positionspreis nicht lesbar - '
+                            . 'eindeutiger Fall (1 Position, 1 Zettel), Zettel wird verwendet.');
+                    } else {
+                        $this->diag('[DIAG][Rename] ⚠️ Positionspreis nicht lesbar und '
+                            . 'Lage mehrdeutig (' . count($hauptIds) . ' Position(en), '
+                            . count($liste) . ' Zettel) - uebersprungen (fail-safe).');
+                        continue;
+                    }
+                }
+
+                $benutzteIndizes[$gewaehlterIndex] = true;
+                $eintrag  = $liste[$gewaehlterIndex];
                 $werteMap = (isset($eintrag['werte']) && is_array($eintrag['werte']))
                     ? $eintrag['werte']
                     : [];
@@ -621,17 +673,66 @@ class OrderRenameListener
                 $this->diag('[DIAG][Rename] Werte uebernommen (Z(Sitzungs-Zettel)): '
                     . count($werteMap) . ' Wert(e) fuer Haupt ' . (int) $hauptId
                     . ' (Zettel-Preis: '
-                    . (isset($eintrag['preis']) ? $eintrag['preis'] : '?') . ')');
+                    . (isset($eintrag['preis']) ? $eintrag['preis'] : '?')
+                    . ', Positionspreis: ' . ($posPreis !== null ? $posPreis : 'nicht lesbar')
+                    . ')');
             }
 
-            // Verbrauchte Zettel entfernen, Rest zurueckschreiben.
-            $rest = array_slice($liste, 0, count($liste) - $n);
-            $ablage->setValue('mirkaKonfigListe', count($rest) > 0 ? json_encode($rest) : '');
+            // Nur die tatsaechlich verbrauchten Zettel entfernen.
+            if (count($benutzteIndizes) > 0) {
+                $rest = [];
+                foreach ($liste as $i => $eintrag) {
+                    if (!isset($benutzteIndizes[$i])) {
+                        $rest[] = $eintrag;
+                    }
+                }
+                $ablage->setValue('mirkaKonfigListe', count($rest) > 0 ? json_encode($rest) : '');
+            }
         } catch (\Throwable $fehler) {
             $this->diag('[DIAG][Rename] Zettel-Lesen fehlgeschlagen: '
                 . $fehler->getMessage());
         }
     }
+
+    /**
+     * NEU v1.4.5: Liest den Brutto-Einzelpreis einer Auftragsposition.
+     * Versucht nacheinander die beiden ueblichen Feldnamen der
+     * Betrags-Zeilen (fest benannte Zugriffe, sandbox-konform).
+     * Liefert null, wenn nichts lesbar ist - dann greift die
+     * Eindeutigkeits-Regel in uebernehmeZettelWerte().
+     *
+     * @param mixed $position Auftragsposition
+     * @return float|null
+     */
+    private function leseBruttoEinzelpreis($position)
+    {
+        // Versuch 1: amounts[0]->priceOriginalGross
+        try {
+            foreach ($position->amounts as $betrag) {
+                $wert = (float) $betrag->priceOriginalGross;
+                if ($wert > 0) {
+                    return $wert;
+                }
+                break;
+            }
+        } catch (\Throwable $egal) {
+            // weiter mit Versuch 2
+        }
+        // Versuch 2: amounts[0]->priceGross
+        try {
+            foreach ($position->amounts as $betrag) {
+                $wert = (float) $betrag->priceGross;
+                if ($wert > 0) {
+                    return $wert;
+                }
+                break;
+            }
+        } catch (\Throwable $egal) {
+            // nicht lesbar
+        }
+        return null;
+    }
+
 
     /**
      * Liest einen Wert aus dem Werte-Array (leerer Text, wenn nicht da).
