@@ -262,4 +262,63 @@ class PluginConfig
         }
         return $value;
     }
+
+    // -----------------------------------------------------------------
+    //  Fehlerschutz / Fail-closed (NEU v1.4.7, Tab 8)
+    // -----------------------------------------------------------------
+
+    /**
+     * Modus des Fehlerschutzes (OrderPriceGuardListener). Rueckgabe ist
+     * IMMER einer der drei Werte:
+     *   'off' = Fehlerschutz aus
+     *   'log' = nur melden, KEIN Schreibvorgang (Standard, sicher)
+     *   'on'  = zusaetzlich sperren (Status setzen, wenn Status-ID hinterlegt)
+     * Unbekannte Werte fallen sicherheitshalber auf 'log' zurueck.
+     */
+    public function getFailClosedMode()
+    {
+        $wert = (string) $this->config->get('MirkaBeltCalculator.failClosedMode', 'log');
+        if ($wert !== 'off' && $wert !== 'log' && $wert !== 'on') {
+            $wert = 'log';
+        }
+        return $wert;
+    }
+
+    /**
+     * Brutto-Basispreis der LEEREN Konfigurator-Variante in EUR. Entspricht
+     * der Bandpreis einer Auftragsposition GENAU diesem Wert, hat das Plugin
+     * NICHT bepreist (der 328730-Fall) -> Fehlbestellung.
+     * 0 (leer/ungueltig) = Preis-Pruefung inaktiv (nur Hinweis im Log).
+     * NEU v1.4.7: Komma-Eingabe "27,93" wird korrekt erkannt.
+     */
+    public function getFailClosedBasePriceGross()
+    {
+        $value = $this->parseKommaZahl(
+            $this->config->get('MirkaBeltCalculator.failClosedBasePriceGross', null),
+            0.0
+        );
+        if ($value < 0) {
+            $value = 0.0;
+        }
+        return $value;
+    }
+
+    /**
+     * Auftrags-Status-ID, auf die eine erkannte Fehlbestellung im Modus 'on'
+     * gesetzt wird (z.B. 8 = Storno, oder ein eigener Klaerungs-Status).
+     * Plenty-Status-IDs koennen dezimal sein (z.B. 9.1), daher als float.
+     * 0 (leer) = nicht sperren, nur melden. Nie raten.
+     */
+    public function getFailClosedStatusId()
+    {
+        $roh = trim((string) $this->config->get('MirkaBeltCalculator.failClosedStatusId', ''));
+        if ($roh === '') {
+            return 0.0;
+        }
+        $value = $this->parseKommaZahl($roh, 0.0);
+        if ($value < 0) {
+            $value = 0.0;
+        }
+        return $value;
+    }
 }
