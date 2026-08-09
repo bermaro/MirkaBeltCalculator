@@ -9,12 +9,23 @@ use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
 use Plenty\Modules\Order\Events\OrderCreated;
 
 /**
- * MirkaBeltCalculatorServiceProvider (v1.4.0)
+ * MirkaBeltCalculatorServiceProvider (v1.4.7)
+ *
+ * NEU v1.4.7: Dritter Event-Listener registriert.
+ *   - OrderCreated -> OrderPriceGuardListener (NEU, "Fehlerschutz/fail-closed"):
+ *     prueft nach dem Auftrag-Anlegen, ob jede Konfigurator-Position einen
+ *     gueltig berechneten Preis hat. Ein Band zum Basispreis der leeren
+ *     Variante (oder ohne lesbaren Preis) gilt als Fehlbestellung und wird
+ *     - je nach Tab 8 - gemeldet und optional auf einen Sperr-Status gesetzt.
+ *     Anlass: Auftrag 328730 lief ohne AfterBasketItemAdd (und damit ohne
+ *     Preis) als bezahlte Bestellung durch. Der Fehlerschutz haengt bewusst
+ *     an OrderCreated, weil das der EINZIGE Punkt ist, der auch dann laeuft,
+ *     wenn AfterBasketItemAdd (z.B. bei Warenkorb-Merge nach Login) ausbleibt.
  *
  * NEU v1.4.0: Zweiter Event-Listener registriert.
  *   - AfterBasketItemAdd -> BasketItemListener (unveraendert):
  *     setzt den berechneten Preis im Warenkorb.
- *   - OrderCreated -> OrderRenameListener (NEU):
+ *   - OrderCreated -> OrderRenameListener:
  *     gibt den Konfigurator-Positionen nach Auftragsanlage sprechende
  *     Namen (Qualitaet, Koernung, Verbindung, Masse, Mirka-Nr.), damit
  *     Auftragsbestaetigung, Rechnung, Lieferschein und Pickliste die
@@ -66,6 +77,16 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
         $eventDispatcher->listen(
             OrderCreated::class,
             'MirkaBeltCalculator\\Listeners\\OrderRenameListener@handle'
+        );
+
+        // 3) NEU v1.4.7: Fehlerschutz (fail-closed). Prueft nach dem
+        //    Auftrag-Anlegen, ob jede Konfigurator-Position gueltig bepreist
+        //    ist; meldet/sperrt Fehlbestellungen (Verhalten steuert Tab 8).
+        //    Eigener Listener, damit die bewaehrte Umbenenn-Logik unberuehrt
+        //    bleibt und der Schutz unabhaengig vom Umbenenn-Modus greift.
+        $eventDispatcher->listen(
+            OrderCreated::class,
+            'MirkaBeltCalculator\\Listeners\\OrderPriceGuardListener@handle'
         );
     }
 }
