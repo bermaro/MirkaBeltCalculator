@@ -242,5 +242,31 @@
             "on": "AN (Namen werden in den Auftrag geschrieben)"
         },
         "default": "log"
+    },
+    {
+        "tab": "8. Fehlerschutz (fail-closed)",
+        "key": "failClosedMode",
+        "label": "Fehlerschutz-Modus: erkennt Konfigurator-Auftraege, die OHNE gueltig berechneten Preis entstanden sind (Fall Auftrag 328730)",
+        "type": "dropdown",
+        "possibleValues": {
+            "off": "AUS (kein Fehlerschutz)",
+            "log": "NUR MELDEN (nur lauter Log-Alarm, KEIN Schreibvorgang - Standard, sicher)",
+            "on": "AN (zusaetzlich den Auftrag auf die unten gewaehlte Status-ID sperren)"
+        },
+        "default": "log"
+    },
+    {
+        "tab": "8. Fehlerschutz (fail-closed)",
+        "key": "failClosedBasePriceGross",
+        "label": "Basispreis BRUTTO der leeren Konfigurator-Variante in EUR (z.B. 27.93). Nur ein Band, dessen Preis GENAU diesem Wert entspricht, gilt als Fehlbestellung. Leer = Preis-Pruefung aus.",
+        "type": "text",
+        "default": ""
+    },
+    {
+        "tab": "8. Fehlerschutz (fail-closed)",
+        "key": "failClosedStatusId",
+        "label": "Auftrags-Status-ID fuer gesperrte Fehlbestellungen (z.B. 8 fuer Storno oder ein eigener Klaerungs-Status). Nur wirksam im Modus AN. Leer = nur melden, nicht sperren.",
+        "type": "text",
+        "default": ""
     }
 ]
