@@ -5,7 +5,6 @@ namespace MirkaBeltCalculator\Listeners;
 use Plenty\Modules\Order\Events\OrderCreated;
 use Plenty\Modules\Order\Contracts\OrderRepositoryContract;
 use Plenty\Modules\Frontend\Session\Storage\Contracts\FrontendSessionStorageFactoryContract;
-use Plenty\Modules\Basket\Contracts\BasketContract;
 use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
@@ -622,53 +621,6 @@ class OrderRenameListener
      * @param array $hauptPositionen  hauptId => Position
      * @param array $werte            (per Referenz) hauptId => [propId => Wert]
      */
-    /**
-     * NEU v1.5.0: Liest den vom BasketItemListener am WARENKORB abgelegten
-     * Zettel-Block und gibt die Zettel-Liste zurueck (oder ein leeres Array).
-     *
-     * Der Block steckt in der Warenkorb-Notiz zwischen den Markern
-     * [[MIRKA_KONFIG]] ... [[/MIRKA_KONFIG]]. Wir schneiden genau diesen
-     * Abschnitt heraus und dekodieren das JSON. Sandbox-konform (nur
-     * strpos/substr, kein Regex). Jeder Fehler endet in einem leeren Array -
-     * dann bleibt es beim bisherigen Verhalten (Namen unveraendert).
-     */
-    private function leseWarenkorbZettel()
-    {
-        try {
-            /** @var BasketContract $basketRepo */
-            $basketRepo = pluginApp(BasketContract::class);
-            $basket     = $basketRepo->load();
-
-            $notiz = '';
-            if (is_object($basket) && isset($basket->orderPropertyNote)) {
-                $notiz = (string) $basket->orderPropertyNote;
-            }
-            if ($notiz === '') {
-                return [];
-            }
-
-            $marker    = '[[MIRKA_KONFIG]]';
-            $markerEnd = '[[/MIRKA_KONFIG]]';
-            $start = strpos($notiz, $marker);
-            if ($start === false) {
-                return [];
-            }
-            $inhaltStart = $start + strlen($marker);
-            $ende = strpos($notiz, $markerEnd, $inhaltStart);
-            if ($ende === false) {
-                return [];
-            }
-            $json = substr($notiz, $inhaltStart, $ende - $inhaltStart);
-
-            $liste = json_decode($json, true);
-            return is_array($liste) ? $liste : [];
-        } catch (\Throwable $fehler) {
-            $this->diag('[DIAG][Rename] Warenkorb-Zettel lesen fehlgeschlagen: '
-                . $fehler->getMessage());
-            return [];
-        }
-    }
-
     private function uebernehmeZettelWerte($hauptPositionen, &$werte)
     {
         try {
@@ -678,25 +630,9 @@ class OrderRenameListener
 
             $roh   = (string) $ablage->getValue('mirkaKonfigListe');
             $liste = ($roh !== '') ? json_decode($roh, true) : [];
-
-            // NEU v1.5.0: RUECKFALL AUF DEN WARENKORB-ZETTEL.
-            // Ist die SITZUNG leer (z. B. weil sich ein Neukunde mitten im
-            // Kauf registriert hat -> Sitzungswechsel, Fall Auftrag 328897),
-            // holen wir denselben Zettel aus dem WARENKORB. Der ueberlebt die
-            // Registrierung. Bewaehrter Sitzungsweg bleibt fuehrend; das hier
-            // greift NUR, wenn die Sitzung nichts liefert.
             if (!is_array($liste) || count($liste) === 0) {
-                $liste = $this->leseWarenkorbZettel();
-                if (count($liste) > 0) {
-                    $this->diag('[DIAG][Rename] Sitzung leer - Zettel aus dem '
-                        . 'WARENKORB geladen (' . count($liste) . ' Eintrag/Eintraege). '
-                        . 'Rettet den Fall "Registrierung mitten im Kauf" (328897).');
-                }
-            }
-
-            if (!is_array($liste) || count($liste) === 0) {
-                $this->diag('[DIAG][Rename] Kein Zettel in Sitzung UND Warenkorb '
-                    . 'gefunden - Namen bleiben ggf. unveraendert (fail-safe).');
+                $this->diag('[DIAG][Rename] Kein Zettel in der Sitzung gefunden - '
+                    . 'Namen bleiben ggf. unveraendert (fail-safe).');
                 return;
             }
 
