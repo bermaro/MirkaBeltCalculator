@@ -9,7 +9,18 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.4.6)
+ * OrderRenameListener (v1.5.3)
+ *
+ * NEU v1.5.3 (13.08.2026): SERVERSEITIGER GUARD.
+ *   Zusaetzlich zur Umbenennung prueft dieser Listener jetzt, ob JEDE
+ *   Konfigurator-Position alle sechs Eigenschaften traegt (Qualitaet,
+ *   Koernung, Verbindung, Breite, Laenge, Mirka-Nr). Datenbasis sind die
+ *   bereits zusammengefuehrten Werte (inkl. Session-Zettel) - NICHT ein
+ *   separater, schwaecherer Parser. Fehlt ein Wert, wird der Auftrag laut
+ *   gemeldet (Methode fuehreGuardAus, Modus aus Tab 8). Der Guard laeuft
+ *   bei OrderCreated und verhindert die Bestellung NICHT (das ist zu
+ *   spaet), macht den Fehlerfall 328897 aber SICHTBAR, damit kein Auftrag
+ *   mit leeren Eigenschaften unbemerkt weiterlaeuft.
  *
  * AENDERUNG v1.4.6 (07.07.2026, Wunsch Bernd):
  * Die Unterzeile "Schleifband Qualität" zeigt jetzt den ausgeschriebenen
@@ -170,9 +181,14 @@ class OrderRenameListener
             $config = pluginApp(PluginConfig::class);
 
             $modus = $config->getRenamePositionsMode();
-            if ($modus === 'off') {
-                return; // Funktion abgeschaltet - nichts tun.
-            }
+            // NEU v1.5.3: KEIN frueher Ausstieg mehr bei modus==='off'.
+            // Frueher stand hier "if (off) return;" - das haette aber den
+            // NEUEN Guard (weiter unten) mit abgeschaltet, obwohl der einen
+            // EIGENEN Schalter in Tab 8 hat. Der Umbenenn-Modus wird jetzt
+            // erst spaeter geprueft (kurz vor dem tatsaechlichen Schreiben);
+            // die Werte-Zusammenfuehrung und der Guard laufen unabhaengig
+            // davon. So ist der Fehlerschutz aktiv, auch wenn die
+            // Positionsnamen-Umbenennung (Tab 7) auf "off" steht.
 
             $eventAuftrag = $event->getOrder();
             if ($eventAuftrag === null) {
@@ -384,6 +400,19 @@ class OrderRenameListener
             $this->uebernehmeZettelWerte($hauptPositionen, $werte);
 
             // -----------------------------------------------------------
+            // NEU v1.5.3: SERVERSEITIGER GUARD (Vollstaendigkeits-Pruefung).
+            // Anders als ein separater Parser nutzt der Guard GENAU die
+            // Werte, die der Umbenenner nach der Zettel-Zuordnung fertig
+            // vorliegen hat (Session-Zettel + alle Auftrags-Quellen). So
+            // wird eine Konfigurator-Position, bei der eine der sechs
+            // Eigenschaften (Qualitaet/Koernung/Verbindung/Breite/Laenge/
+            // Mirka-Nr) FEHLT, zuverlaessig erkannt (Fall 328897) - ohne
+            // Fehlalarm, weil hier dieselbe Datenbasis wie fuer die
+            // Umbenennung gilt. Gesammelt wird in der Namens-Schleife
+            // unten; die Meldung erfolgt danach.
+            $guardProbleme = [];
+
+            // -----------------------------------------------------------
             // Schritt 3: Neue Namen bauen.
             // -----------------------------------------------------------
             $neueNamen = []; // orderItemId => neuer Name
@@ -397,6 +426,24 @@ class OrderRenameListener
                 $breite  = $this->holeWert($w, $config->getPropertyIdBreite());
                 $laenge  = $this->holeWert($w, $config->getPropertyIdLaenge());
                 $mirkaNr = $this->holeWert($w, $config->getPropertyIdMirkaCode());
+
+                // NEU v1.5.3: Guard-Vollstaendigkeit - ALLE SECHS Werte
+                // muessen nicht-leer sein. Fehlt einer, ist die Position
+                // verdaechtig (auch die Mirka-Nr wird hier verlangt).
+                $fehlende = [];
+                if ($code === '')    { $fehlende[] = 'Qualitaet';   }
+                if ($grit === '')    { $fehlende[] = 'Koernung';    }
+                if ($joint === '')   { $fehlende[] = 'Verbindung';  }
+                if ($breite === '')  { $fehlende[] = 'Breite';      }
+                if ($laenge === '')  { $fehlende[] = 'Laenge';      }
+                if ($mirkaNr === '') { $fehlende[] = 'Mirka-Nr';    }
+                if (count($fehlende) > 0) {
+                    $guardProbleme[] = [
+                        'positionsId' => (int) $hauptId,
+                        'gefunden'    => (6 - count($fehlende)),
+                        'fehlende'    => $fehlende,
+                    ];
+                }
 
                 // Ohne die fuenf Pflichtwerte wird NICHT umbenannt
                 // (kein Raten, lieber alter Name als falscher Name).
@@ -451,6 +498,15 @@ class OrderRenameListener
                     }
                 }
             }
+
+            // -----------------------------------------------------------
+            // NEU v1.5.3: GUARD-MELDUNG (vor jedem return, damit auch
+            // komplett leere Konfigurationen erfasst werden).
+            // Laeuft nur, wenn der Fehlerschutz nicht auf "off" steht.
+            // Meldet jede Konfigurator-Position, der eine der sechs
+            // Eigenschaften fehlt. Modus "on" setzt zusaetzlich den
+            // Sperr-Status (falls in Tab 8 hinterlegt) - sonst nur melden.
+            $this->fuehreGuardAus($config, $auftragsId, $guardProbleme);
 
             if (count($neueNamen) === 0) {
                 return; // Nichts umzubenennen.
@@ -621,6 +677,65 @@ class OrderRenameListener
      * @param array $hauptPositionen  hauptId => Position
      * @param array $werte            (per Referenz) hauptId => [propId => Wert]
      */
+    /**
+     * NEU v1.5.3: SERVERSEITIGER GUARD.
+     * Meldet jede Konfigurator-Position, bei der nicht alle sechs
+     * Eigenschaften vorliegen (Datenbasis: die im Umbenenner bereits
+     * zusammengefuehrten Werte inkl. Session-Zettel). Verhindert nichts
+     * (OrderCreated laeuft nach dem Anlegen), sondern macht den Fehler
+     * SICHTBAR, damit der Auftrag nicht unbemerkt weiterlaeuft.
+     *
+     * Modus kommt aus Tab 8 (getFailClosedMode, wie beim Preis-Guard):
+     *   off = nichts tun
+     *   log = nur laut melden (Standard, sicher)
+     *   on  = zusaetzlich Sperr-Status setzen (falls in Tab 8 hinterlegt)
+     *
+     * @param PluginConfig $config
+     * @param int          $auftragsId
+     * @param array        $guardProbleme  Liste verdaechtiger Positionen
+     */
+    private function fuehreGuardAus($config, $auftragsId, $guardProbleme)
+    {
+        try {
+            $modus = $config->getFailClosedMode();
+            if ($modus === 'off') {
+                return;
+            }
+            if (!is_array($guardProbleme) || count($guardProbleme) === 0) {
+                return; // Alles vollstaendig - nichts zu melden.
+            }
+
+            $this->diag('[DIAG][Rename][GUARD] Auftrag ' . $auftragsId . ': '
+                . count($guardProbleme) . ' Konfigurator-Position(en) mit '
+                . 'UNVOLLSTAENDIGEN Bestelleigenschaften - BITTE PRUEFEN. '
+                . 'Details: ' . json_encode($guardProbleme));
+
+            if ($modus !== 'on') {
+                $this->diag('[DIAG][Rename][GUARD] Modus "nur melden" - es '
+                    . 'wurde NICHTS am Auftrag geaendert.');
+                return;
+            }
+
+            // Modus 'on': Sperr-Status setzen, falls hinterlegt.
+            $statusId = $config->getFailClosedStatusId();
+            if ($statusId <= 0) {
+                $this->diag('[DIAG][Rename][GUARD] Modus "AN", aber KEINE '
+                    . 'Sperr-Status-ID in Tab 8 - es wurde nur gemeldet.');
+                return;
+            }
+
+            /** @var OrderRepositoryContract $orderRepo */
+            $orderRepo = pluginApp(OrderRepositoryContract::class);
+            $orderRepo->updateOrder(['statusId' => $statusId], $auftragsId);
+            $this->diag('[DIAG][Rename][GUARD] Auftrag ' . $auftragsId
+                . ' auf Sperr-Status ' . $statusId . ' gesetzt.');
+        } catch (\Throwable $fehler) {
+            // Der Guard darf den Umbenenner/Auftrag NIEMALS stoeren.
+            $this->diag('[DIAG][Rename][GUARD] Guard-Fehler (ignoriert): '
+                . $fehler->getMessage());
+        }
+    }
+
     private function uebernehmeZettelWerte($hauptPositionen, &$werte)
     {
         try {
