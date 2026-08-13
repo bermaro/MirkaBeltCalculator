@@ -4,7 +4,6 @@ namespace MirkaBeltCalculator\Listeners;
 
 use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
 use Plenty\Modules\Frontend\Session\Storage\Contracts\FrontendSessionStorageFactoryContract;
-use Plenty\Modules\Basket\Contracts\BasketContract;
 use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
@@ -255,150 +254,8 @@ class BasketItemListener
             ]
         );
 
-        // -----------------------------------------------------------------
-        // NEU v1.5.0 - ZWEITE, SITZUNGS-UNABHAENGIGE ABLAGE (WARENKORB)
-        // -----------------------------------------------------------------
-        // Problem (Auftrag 328897, 13.08.2026): Der Zettel oben liegt in der
-        // Kunden-SITZUNG. Registriert sich ein Neukunde MITTEN im Kauf, wechselt
-        // die Sitzung - der Zettel ist weg, die Bestelleigenschaften am Auftrag
-        // bleiben leer. Beweis: Warenkorb 10:13 komplett korrekt (Preis 139,15;
-        // 6 Werte), Kaufabschluss 10:36 ohne Zettel.
-        // LOESUNG: Denselben Zettel ZUSAETZLICH am WARENKORB ablegen. Der
-        // Warenkorb ueberlebt die Registrierung (Plenty uebernimmt ihn in die
-        // neue Sitzung) - anders als die Sitzung selbst. Der OrderRenameListener
-        // liest ihn als Rueckfall-Quelle, wenn die Sitzung leer ist.
-        // Fehler hier duerfen den Kauf NIEMALS stoeren -> eigenes try/catch.
-        try {
-            /** @var BasketContract $basketRepo */
-            $basketRepo = pluginApp(BasketContract::class);
-            $basket     = $basketRepo->load();
-
-            // Bisherige Warenkorb-Notiz lesen (kann fremden Text enthalten -
-            // wir haengen NUR unseren eigenen, klar markierten Block an bzw.
-            // ersetzen ihn, damit keine Kundennotiz verloren geht).
-            $altNotiz = '';
-            if (is_object($basket) && isset($basket->orderPropertyNote)) {
-                $altNotiz = (string) $basket->orderPropertyNote;
-            }
-
-            // Unseren Zettel-Block als eindeutig markierten JSON-Abschnitt
-            // bauen. Marker erlauben spaeteres, sicheres Herausschneiden.
-            $marker    = '[[MIRKA_KONFIG]]';
-            $markerEnd = '[[/MIRKA_KONFIG]]';
-            $block     = $marker . json_encode($liste) . $markerEnd;
-
-            // Falls schon ein alter Mirka-Block drinsteht: herausschneiden,
-            // damit wir ihn durch die aktuelle (vollstaendige) Liste ersetzen.
-            $sauber = $this->entferneMirkaBlock($altNotiz, $marker, $markerEnd);
-            $neu    = $sauber . $block;
-
-            $basket->orderPropertyNote = $neu;
-            $basketRepo->save($basket);
-
-            $this->getLogger(__METHOD__)->error(
-                'MirkaBeltCalculator [DIAG]: Zettel ZUSAETZLICH am Warenkorb '
-                . 'gespeichert (sitzungs-unabhaengig).',
-                ['anzahlEintraege' => count($liste)]
-            );
-        } catch (\Throwable $egal) {
-            // Kein Beinbruch: die Sitzungs-Ablage oben funktioniert weiter.
-            $this->getLogger(__METHOD__)->error(
-                'MirkaBeltCalculator [DIAG]: Warenkorb-Zettel konnte nicht '
-                . 'gespeichert werden (Sitzungs-Zettel bleibt aktiv).',
-                ['message' => $egal->getMessage()]
-            );
-        }
     }
 
-    /**
-     * NEU v1.5.0: Schneidet einen zuvor gespeicherten Mirka-Block sauber aus
-     * einer Warenkorb-Notiz heraus (zwischen Start- und End-Marker), damit
-     * beim erneuten Speichern kein doppelter/veralteter Block entsteht.
-     * Fremder Notiztext des Kunden bleibt dabei unangetastet.
-     * Sandbox-konform: nur strpos/substr, keine Regex-Funktionen noetig.
-     */
-    private function entferneMirkaBlock($text, $marker, $markerEnd)
-    {
-        $text = (string) $text;
-        $start = strpos($text, $marker);
-        if ($start === false) {
-            return $text; // kein alter Block vorhanden
-        }
-        $ende = strpos($text, $markerEnd, $start);
-        if ($ende === false) {
-            // Start ohne Ende (sollte nicht vorkommen): ab Start abschneiden.
-            return substr($text, 0, $start);
-        }
-        $ende = $ende + strlen($markerEnd);
-        return substr($text, 0, $start) . substr($text, $ende);
-    }
-
-    /**
-     * Liest die Konfiguration aus den originOrderVariationProperties.
-     *
-     * NEUE STRUKTUR: jeder Eintrag hat propertyId / type / name / value.
-     * Wir lesen propertyId und value; die Zuordnung erfolgt ueber die
-     * aktuell konfigurierten IDs. (Anpassung auf echte IDs folgt nach
-     * Auswertung des VOLLDUMP-Logs.)
-     */
-    private function extractConfiguration(PluginConfig $config, array $orderProperties)
-    {
-        $idSchleifmittel = $config->getPropertyIdSchleifmittel();
-        $idKoernung      = $config->getPropertyIdKoernung();
-        $idVerbindung    = $config->getPropertyIdVerbindung();
-        $idBreite        = $config->getPropertyIdBreite();
-        $idLaenge        = $config->getPropertyIdLaenge();
-
-        $productGroupCode = null;
-        $grit             = null;
-        $jointCode        = null;
-        $width            = null;
-        $length           = null;
-
-        foreach ($orderProperties as $prop) {
-            $propertyId = $this->getPropertyId($prop);
-            $value      = $this->getValue($prop);
-
-            $propertyId = (int) $propertyId;
-            $value      = (string) $value;
-
-            if ($propertyId === $idSchleifmittel) {
-                $productGroupCode = trim($value);
-            } elseif ($propertyId === $idKoernung) {
-                $grit = (int) $value;
-            } elseif ($propertyId === $idVerbindung) {
-                $jointCode = trim($value);
-            } elseif ($propertyId === $idBreite) {
-                $width = (int) $value;
-            } elseif ($propertyId === $idLaenge) {
-                $length = (int) $value;
-            }
-        }
-
-        if (empty($productGroupCode) || $grit <= 0 || empty($jointCode) || $width <= 0 || $length <= 0) {
-            return null;
-        }
-
-        return [
-            'productGroupCode' => $productGroupCode,
-            'grit'             => $grit,
-            'jointCode'        => $jointCode,
-            'width'            => $width,
-            'length'           => $length,
-        ];
-    }
-
-    /**
-     * Liest ein Feld aus einem Eintrag, egal ob Objekt oder Array.
-     * Gibt '' zurueck, wenn das Feld fehlt.
-     */
-    /**
-     * Liest die vier bekannten Felder eines Eintrags fest aus - ohne
-     * dynamische Property-Namen und ohne Konvertierungs-Funktionen
-     * (beides ist in der Plenty-Sandbox verboten). Jeder Zugriff ist
-     * fest ausgeschrieben mit isset()-Pruefung; funktioniert sowohl fuer
-     * Objekte (->propertyId) als auch Arrays (['propertyId']).
-     */
     private function getPropertyId($prop)
     {
         if (is_object($prop)) {
