@@ -253,9 +253,74 @@ class BasketItemListener
                 'werte'           => $eintrag['werte'],
             ]
         );
-
     }
 
+    /**
+     * Liest die Konfiguration aus den originOrderVariationProperties.
+     *
+     * NEUE STRUKTUR: jeder Eintrag hat propertyId / type / name / value.
+     * Wir lesen propertyId und value; die Zuordnung erfolgt ueber die
+     * aktuell konfigurierten IDs. (Anpassung auf echte IDs folgt nach
+     * Auswertung des VOLLDUMP-Logs.)
+     */
+    private function extractConfiguration(PluginConfig $config, array $orderProperties)
+    {
+        $idSchleifmittel = $config->getPropertyIdSchleifmittel();
+        $idKoernung      = $config->getPropertyIdKoernung();
+        $idVerbindung    = $config->getPropertyIdVerbindung();
+        $idBreite        = $config->getPropertyIdBreite();
+        $idLaenge        = $config->getPropertyIdLaenge();
+
+        $productGroupCode = null;
+        $grit             = null;
+        $jointCode        = null;
+        $width            = null;
+        $length           = null;
+
+        foreach ($orderProperties as $prop) {
+            $propertyId = $this->getPropertyId($prop);
+            $value      = $this->getValue($prop);
+
+            $propertyId = (int) $propertyId;
+            $value      = (string) $value;
+
+            if ($propertyId === $idSchleifmittel) {
+                $productGroupCode = trim($value);
+            } elseif ($propertyId === $idKoernung) {
+                $grit = (int) $value;
+            } elseif ($propertyId === $idVerbindung) {
+                $jointCode = trim($value);
+            } elseif ($propertyId === $idBreite) {
+                $width = (int) $value;
+            } elseif ($propertyId === $idLaenge) {
+                $length = (int) $value;
+            }
+        }
+
+        if (empty($productGroupCode) || $grit <= 0 || empty($jointCode) || $width <= 0 || $length <= 0) {
+            return null;
+        }
+
+        return [
+            'productGroupCode' => $productGroupCode,
+            'grit'             => $grit,
+            'jointCode'        => $jointCode,
+            'width'            => $width,
+            'length'           => $length,
+        ];
+    }
+
+    /**
+     * Liest ein Feld aus einem Eintrag, egal ob Objekt oder Array.
+     * Gibt '' zurueck, wenn das Feld fehlt.
+     */
+    /**
+     * Liest die vier bekannten Felder eines Eintrags fest aus - ohne
+     * dynamische Property-Namen und ohne Konvertierungs-Funktionen
+     * (beides ist in der Plenty-Sandbox verboten). Jeder Zugriff ist
+     * fest ausgeschrieben mit isset()-Pruefung; funktioniert sowohl fuer
+     * Objekte (->propertyId) als auch Arrays (['propertyId']).
+     */
     private function getPropertyId($prop)
     {
         if (is_object($prop)) {
