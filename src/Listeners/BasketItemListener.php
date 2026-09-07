@@ -66,6 +66,41 @@ class BasketItemListener
     const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
 
     /**
+     * NEU v1.5.9: Merker fuer den Debug-Zustand (Tab 6).
+     */
+    private $debugGeprueft = false;
+    private $debugAn = true;
+
+    /**
+     * NEU v1.5.9: ROUTINE-Meldung mit Zusatzkontext - erscheint NUR,
+     * wenn in Tab 6 der Debug-Modus AN ist. Im Normalbetrieb bleibt das
+     * Log dadurch schlank: pro Mirka-Artikel nur noch die eine
+     * [MIRKA-KURZ]-Zeile. Echte Probleme laufen weiter ueber die
+     * direkten Logger und erscheinen IMMER.
+     *
+     * @param string $meldung
+     * @param array  $kontext
+     */
+    private function diagKontext($meldung, $kontext = [])
+    {
+        if ($this->debugGeprueft === false) {
+            $this->debugGeprueft = true;
+            try {
+                /** @var PluginConfig $cfg */
+                $cfg = pluginApp(PluginConfig::class);
+                $this->debugAn = $cfg->isDebugMode();
+            } catch (\Throwable $egal) {
+                $this->debugAn = true; // Im Zweifel lieber loggen.
+            }
+        }
+        if (!$this->debugAn) {
+            return;
+        }
+        $this->getLogger(self::LOG_KENNUNG)->error($meldung, $kontext);
+    }
+
+
+    /**
      * Wird vom Event-Dispatcher aufgerufen, NACHDEM ein Artikel in den
      * Warenkorb gelegt wurde.
      */
@@ -81,25 +116,27 @@ class BasketItemListener
             if ($basketItem === null) {
                 // error() = garantiert sichtbar
                 $this->getLogger(self::LOG_KENNUNG)->error(
-                    'MirkaBeltCalculator [DIAG]: Kein BasketItem im Event erhalten.'
+                    '[MIRKA-PROBLEM] Kein BasketItem im Event erhalten.'
                 );
                 return;
             }
 
             $variationId = (int) $basketItem->variationId;
 
-            // DIAG 1: Feuert AfterBasketItemAdd ueberhaupt? (garantiert sichtbar)
-            $this->getLogger(self::LOG_KENNUNG)->error(
-                'MirkaBeltCalculator [DIAG]: AfterBasketItemAdd ausgeloest.',
-                [
-                    'variationId'   => $variationId,
-                    'wirdBehandelt' => $config->isHandledVariation($variationId),
-                ]
-            );
-
+            // NEU v1.5.9: ZUERST pruefen, ob es ueberhaupt ein Mirka-
+            // Konfigurator-Artikel ist. Frueher wurde VOR dieser Pruefung
+            // geloggt - dadurch erzeugte jeder ganz normale Artikel im
+            // Warenkorb eine Mirka-Logzeile. Jetzt bleibt das Log bei
+            // Fremdartikeln vollstaendig still.
             if (!$config->isHandledVariation($variationId)) {
                 return;
             }
+
+            // Routine-Meldung nur bei Debug (Tab 6).
+            $this->diagKontext(
+                'MirkaBeltCalculator [DIAG]: AfterBasketItemAdd ausgeloest.',
+                ['variationId' => $variationId]
+            );
 
             // -------------------------------------------------------------
             //  Bestelleigenschaften lesen
@@ -110,7 +147,7 @@ class BasketItemListener
 
             // DIAG 2: VOLLSTAENDIGER Dump der neuen Struktur (propertyId/type/name/value).
             // Hieraus lesen wir die echten propertyId-Zuordnungen ab.
-            $this->getLogger(self::LOG_KENNUNG)->error(
+            $this->diagKontext(
                 'MirkaBeltCalculator [DIAG]: originOrderVariationProperties (VOLLDUMP).',
                 [
                     'istArray' => is_array($orderProperties),
@@ -120,11 +157,21 @@ class BasketItemListener
             );
 
             if (!is_array($orderProperties) || empty($orderProperties)) {
+                // NEU v1.5.10 (KRITISCH): Diese Meldung MUSS immer
+                // erscheinen, auch bei Debug=AUS. In v1.5.9 lief sie
+                // versehentlich ueber diagKontext() und war damit im
+                // Normalbetrieb unsichtbar - ausgerechnet bei dem Fall,
+                // den wir suchen: Mirka-Artikel erkannt, aber KEINE
+                // Bestelleigenschaften da. Dann wird kein Preis gesetzt,
+                // keine [MIRKA-KURZ]-Zeile geschrieben - ohne diese
+                // Meldung stuende gar nichts im Log.
                 $this->getLogger(self::LOG_KENNUNG)->error(
-                    'MirkaBeltCalculator [DIAG]: Keine originOrderVariationProperties gefunden (leer).',
+                    '[MIRKA-PROBLEM] Keine Bestelleigenschaften am Mirka-'
+                    . 'Warenkorbartikel | variationId=' . $variationId
+                    . ' | Es wurde KEIN Preis gesetzt.',
                     ['variationId' => $variationId]
                 );
-                // Kein Preis-Setzen, kein stiller 1-EUR-Artikel: hier nur Diagnose.
+                // Kein Preis-Setzen, kein stiller 1-EUR-Artikel.
                 return;
             }
 
@@ -136,7 +183,7 @@ class BasketItemListener
             $configData = $this->extractConfiguration($config, $orderProperties);
             if ($configData === null) {
                 $this->getLogger(self::LOG_KENNUNG)->error(
-                    'MirkaBeltCalculator [DIAG]: Konfiguration unvollstaendig mit aktuell konfigurierten IDs. '
+                    '[MIRKA-PROBLEM] Konfiguration unvollstaendig mit aktuell konfigurierten IDs. '
                     . 'Bitte VOLLDUMP oben pruefen und echte propertyId-Zuordnung ableiten.',
                     ['erwarteteIds' => [
                         'schleifmittel' => $config->getPropertyIdSchleifmittel(),
@@ -159,8 +206,20 @@ class BasketItemListener
             );
 
             if (!$result['success']) {
+                // NEU v1.5.10: Der Grund steht jetzt DIREKT in der
+                // sichtbaren Meldung - vorher steckte er nur im
+                // Zusatzkontext und musste aufgeklappt werden.
+                $grund = '';
+                if (isset($result['detail']) && $result['detail'] !== '') {
+                    $grund = (string) $result['detail'];
+                } elseif (isset($result['error']) && $result['error'] !== '') {
+                    $grund = (string) $result['error'];
+                } else {
+                    $grund = 'kein Grund gemeldet';
+                }
                 $this->getLogger(self::LOG_KENNUNG)->error(
-                    'MirkaBeltCalculator [DIAG]: Preisberechnung fehlgeschlagen.',
+                    '[MIRKA-PROBLEM] Preisberechnung fehlgeschlagen | Grund='
+                    . $grund . ' | Es wurde KEIN Preis gesetzt.',
                     $result
                 );
                 // Bewusst KEIN Preis setzen.
@@ -174,7 +233,7 @@ class BasketItemListener
             $basketItem->givenPrice    = $result['verkaufspreis'];
 
             // DIAG 3: Preis wurde im Listener gesetzt (garantiert sichtbar).
-            $this->getLogger(self::LOG_KENNUNG)->error(
+            $this->diagKontext(
                 'MirkaBeltCalculator [DIAG]: Preis im Listener gesetzt (useGivenPrice/givenPrice).',
                 [
                     'variationId'    => $variationId,
@@ -191,14 +250,15 @@ class BasketItemListener
                 $this->merkeKonfigurationFuerRename($orderProperties, (float) $result['verkaufspreis']);
             } catch (\Throwable $egal) {
                 $this->getLogger(self::LOG_KENNUNG)->error(
-                    'MirkaBeltCalculator [DIAG]: Zettel konnte nicht gespeichert werden.',
+                    '[MIRKA-PROBLEM] Zettel konnte nicht gespeichert werden | Grund='
+                    . $egal->getMessage(),
                     ['message' => $egal->getMessage()]
                 );
             }
 
         } catch (\Throwable $t) {
             $this->getLogger(self::LOG_KENNUNG)->error(
-                'MirkaBeltCalculator [DIAG]: Exception im BasketItemListener.',
+                '[MIRKA-PROBLEM] BasketItemListener Exception: ' . $t->getMessage(),
                 [
                     'exception' => 'Throwable',
                     'message'   => $t->getMessage(),
@@ -247,12 +307,27 @@ class BasketItemListener
         }
         $liste[] = $eintrag;
 
+        // HINWEIS v1.5.12 (bewusst NICHT geaendert - dokumentierte Grenze):
+        // Die Sitzungs-Liste behaelt nur die letzten 10 Zettel.
+        // Bewusst NICHT einfach erhoeht, weil die Liste nicht nur die
+        // aktuellen Warenkorbpositionen enthaelt: Auch wieder entfernte
+        // oder mehrfach umkonfigurierte Baender hinterlassen Zettel
+        // ("stale"). Eine groessere Liste wuerde damit MEHR alte Zettel
+        // aufbewahren und dadurch die Preis-Mehrdeutigkeit erhoehen -
+        // also genau den Fall haeufiger machen, den die neue
+        // Fail-Safe-Sperre blockiert.
+        // Sauber geloest wird das erst mit einer eindeutigen configId /
+        // BasketItem-Zuordnung (siehe UEBERGABE, offene Punkte).
+        // Praktische Folge heute: Bei mehr als 10 nacheinander
+        // konfigurierten Baendern faellt der aelteste Zettel weg; die
+        // betroffene Position wird dann vom 6/6-Guard als unvollstaendig
+        // gemeldet (fail-safe, kein stiller Fehler).
         if (count($liste) > 10) {
             $liste = array_slice($liste, -10);
         }
         $ablage->setValue('mirkaKonfigListe', json_encode($liste));
 
-        $this->getLogger(self::LOG_KENNUNG)->error(
+        $this->diagKontext(
             'MirkaBeltCalculator [DIAG]: Zettel fuer Umbenenner in Sitzung gespeichert.',
             [
                 'anzahlEintraege' => count($liste),
