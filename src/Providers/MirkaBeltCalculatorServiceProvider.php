@@ -45,12 +45,19 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
     use Loggable;
 
     /**
+     * NEU v1.5.7: EINE feste Log-Kennung fuer ALLE Mirka-Meldungen.
+     * Dadurch reicht im Plenty-Log EIN Filter, um Warenkorb, Umbenenner,
+     * Vollstaendigkeits-Guard UND Preis-Guard gemeinsam zu sehen.
+     */
+    const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
+
+    /**
      * Wird beim Laden des Plugins ausgefuehrt.
      */
     public function register()
     {
         // Log ueber Uebersetzungs-Schluessel (siehe Debug.properties -> register)
-        $this->getLogger(__METHOD__)->info(
+        $this->getLogger(self::LOG_KENNUNG)->info(
             'MirkaBeltCalculator::Debug.register'
         );
     }
@@ -62,7 +69,7 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
     public function boot(Dispatcher $eventDispatcher)
     {
         // Log ueber Uebersetzungs-Schluessel (siehe Debug.properties -> boot)
-        $this->getLogger(__METHOD__)->info(
+        $this->getLogger(self::LOG_KENNUNG)->info(
             'MirkaBeltCalculator::Debug.boot'
         );
 
