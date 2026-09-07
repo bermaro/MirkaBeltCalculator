@@ -253,6 +253,51 @@ class BasketItemListener
                 'werte'           => $eintrag['werte'],
             ]
         );
+
+        // -------------------------------------------------------------
+        // NEU v1.5.4: SAMMELZEILE. Alles Wichtige steht direkt IM
+        // Nachrichtentext - dadurch in der Log-Liste (Spalte "Nachricht")
+        // sofort lesbar, ohne "additionalInfo" aufklappen zu muessen.
+        // Suchbegriff im Log: MIRKA-KURZ
+        // Fehler hier duerfen den Kauf niemals stoeren -> eigenes try.
+        // -------------------------------------------------------------
+        try {
+            /** @var PluginConfig $cfg */
+            $cfg = pluginApp(PluginConfig::class);
+            $w   = $eintrag['werte'];
+            $this->getLogger(__METHOD__)->error(
+                '[MIRKA-KURZ] WARENKORB'
+                . ' | Qualitaet=' . $this->zettelWert($w, $cfg->getPropertyIdSchleifmittel())
+                . ' | Koernung='  . $this->zettelWert($w, $cfg->getPropertyIdKoernung())
+                . ' | Verbindung=' . $this->zettelWert($w, $cfg->getPropertyIdVerbindung())
+                . ' | Breite='    . $this->zettelWert($w, $cfg->getPropertyIdBreite())
+                . ' | Laenge='    . $this->zettelWert($w, $cfg->getPropertyIdLaenge())
+                . ' | MirkaNr='   . $this->zettelWert($w, $cfg->getPropertyIdMirkaCode())
+                . ' | Preis(brutto)=' . (float) $preis
+                . ' | Zettel im Warenkorb=' . count($liste)
+            );
+        } catch (\Throwable $egal) {
+            // Sammelzeile ist reine Bequemlichkeit - Fehler ignorieren.
+        }
+    }
+
+    /**
+     * NEU v1.5.4: Liest einen Wert aus dem Zettel-Werte-Array fuer die
+     * Sammelzeile. Gibt "(leer)" zurueck, wenn nichts drinsteht - so
+     * sieht man auf einen Blick, welcher Wert gefehlt hat.
+     *
+     * @param array $werte      Werte-Array des Zettels (Schluessel = Property-ID)
+     * @param int   $propertyId
+     * @return string
+     */
+    private function zettelWert($werte, $propertyId)
+    {
+        $schluessel = (string) ((int) $propertyId);
+        if (is_array($werte) && isset($werte[$schluessel])
+            && (string) $werte[$schluessel] !== '') {
+            return (string) $werte[$schluessel];
+        }
+        return '(leer)';
     }
 
     /**
