@@ -56,10 +56,6 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
      */
     public function register()
     {
-        // Log ueber Uebersetzungs-Schluessel (siehe Debug.properties -> register)
-        $this->getLogger(self::LOG_KENNUNG)->info(
-            'MirkaBeltCalculator::Debug.register'
-        );
     }
 
     /**
@@ -68,10 +64,6 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
      */
     public function boot(Dispatcher $eventDispatcher)
     {
-        // Log ueber Uebersetzungs-Schluessel (siehe Debug.properties -> boot)
-        $this->getLogger(self::LOG_KENNUNG)->info(
-            'MirkaBeltCalculator::Debug.boot'
-        );
 
         // 1) Preis setzen, wenn ein Artikel in den Warenkorb kommt.
         $eventDispatcher->listen(
