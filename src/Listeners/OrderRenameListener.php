@@ -135,6 +135,12 @@ class OrderRenameListener
 {
     use Loggable;
 
+    /**
+     * NEU v1.5.6: EINE feste Log-Kennung fuer ALLE Meldungen dieses
+     * Listeners. Damit liegt alles im Log unter einem Identifikator.
+     */
+    const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
+
     /** Positionstyp: normale Variantenposition (der Sammelartikel). */
     const TYP_VARIANTENPOSITION = 1;
 
@@ -742,7 +748,7 @@ class OrderRenameListener
 
             // Klartext als Nachricht (nicht ueber den Uebersetzungs-
             // Schluessel), damit der Text direkt in der Log-Liste steht.
-            $this->getLogger(__METHOD__)->error($text);
+            $this->getLogger(self::LOG_KENNUNG)->error($text);
         } catch (\Throwable $egal) {
             // Sammelzeile ist reine Bequemlichkeit - Fehler ignorieren.
         }
@@ -992,7 +998,9 @@ class OrderRenameListener
      */
     private function diag($text)
     {
-        $this->getLogger(__METHOD__)->error(
+        // NEU v1.5.6: feste Kennung statt __METHOD__ - alle Zeilen
+        // dieses Listeners liegen im Log unter EINEM Identifikator.
+        $this->getLogger(self::LOG_KENNUNG)->error(
             'MirkaBeltCalculator::Debug.properties',
             $text
         );
