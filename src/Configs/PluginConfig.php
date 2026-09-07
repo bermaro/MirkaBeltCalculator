@@ -235,10 +235,11 @@ class PluginConfig
 
     public function isDebugMode()
     {
-        // HINWEIS: Fallback bewusst 'on' waehrend der TESTPHASE.
-        // VOR LIVE: Einstellung in Plenty auf "off" stellen UND diesen
-        // Fallback auf 'off' aendern (steht auf der Vor-Live-Checkliste).
-        return $this->config->get('MirkaBeltCalculator.debugMode', 'on') === 'on';
+        // NEU v1.5.9: Fallback jetzt 'off' (Live-Betrieb). Frueher stand
+        // hier 'on' aus der Testphase - liefert Plenty die Einstellung
+        // einmal nicht, waere das Log ungewollt wieder voll. Echte
+        // Probleme erscheinen unabhaengig davon (MIRKA-PROBLEM/KURZ).
+        return $this->config->get('MirkaBeltCalculator.debugMode', 'off') === 'on';
     }
 
     public function isMockMode()
