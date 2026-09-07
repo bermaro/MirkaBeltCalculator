@@ -97,7 +97,7 @@ class OrderPriceGuardListener
 
             $eventAuftrag = $event->getOrder();
             if ($eventAuftrag === null) {
-                $this->guardLog('MirkaBeltCalculator [DIAG][Guard]: Event ohne Auftrag - Abbruch.');
+                $this->guardLog('[MIRKA-PROBLEM] Preis-Guard: Event ohne Auftrag - Abbruch.');
                 return;
             }
 
@@ -179,7 +179,7 @@ class OrderPriceGuardListener
             // wichtigste Fall) nicht greifen. Einmal deutlich ins Log.
             if ($basisPreisBrutto <= 0) {
                 $this->guardLog(
-                    'MirkaBeltCalculator [DIAG][Guard]: KEIN Basispreis in Tab 8 hinterlegt - '
+                    '[MIRKA-PROBLEM] Kein Basispreis in Tab 8 hinterlegt - '
                     . 'die Preis-Pruefung ist inaktiv. Bitte den Brutto-Basispreis der leeren '
                     . 'Konfigurator-Variante eintragen, damit Fehlbestellungen wie 328730 '
                     . 'erkannt werden.',
@@ -194,16 +194,27 @@ class OrderPriceGuardListener
             // -------------------------------------------------------------
             //  FEHLERSCHUTZ GREIFT: immer laut und deutlich melden.
             // -------------------------------------------------------------
+            // NEU v1.5.9: Position, Preis und Grund stehen jetzt DIREKT in
+            // der sichtbaren Meldung. Frueher lagen sie nur im Zusatz-
+            // kontext ($verdaechtige) und mussten im Log aufgeklappt
+            // werden. Der grosse Kontext bleibt zusaetzlich erhalten.
+            $klartext = '';
+            foreach ($verdaechtige as $v) {
+                $klartext .= ' || Position '
+                    . (isset($v['positionsId']) ? (int) $v['positionsId'] : 0)
+                    . ' | Preis=' . (isset($v['preis']) ? $v['preis'] : '?')
+                    . ' | Grund=' . (isset($v['grund']) ? $v['grund'] : '?');
+            }
             $this->guardLog(
-                'MirkaBeltCalculator [FEHLERSCHUTZ] Auftrag ' . $auftragsId . ': '
-                . count($verdaechtige) . ' Konfigurator-Position(en) OHNE gueltig berechneten '
-                . 'Preis. Preis/Fertigung NICHT gesichert - BITTE PRUEFEN.',
+                '[MIRKA-PROBLEM] FEHLERSCHUTZ Auftrag ' . $auftragsId . ': '
+                . count($verdaechtige) . ' Konfigurator-Position(en) OHNE gueltig '
+                . 'berechneten Preis - BITTE PRUEFEN.' . $klartext,
                 ['auftrag' => $auftragsId, 'verdaechtige' => $verdaechtige, 'modus' => $modus]
             );
 
             if ($modus !== 'on') {
                 $this->guardLog(
-                    'MirkaBeltCalculator [FEHLERSCHUTZ] Modus "nur melden" - es wurde NICHTS am '
+                    '[MIRKA-PROBLEM] FEHLERSCHUTZ Modus "nur melden" - es wurde NICHTS am '
                     . 'Auftrag geaendert. Zum aktiven Sperren Tab 8 auf "AN" stellen und eine '
                     . 'Sperr-Status-ID eintragen.',
                     ['auftrag' => $auftragsId]
@@ -215,7 +226,7 @@ class OrderPriceGuardListener
             $statusId = $config->getFailClosedStatusId();
             if ($statusId <= 0) {
                 $this->guardLog(
-                    'MirkaBeltCalculator [FEHLERSCHUTZ] Modus "AN", aber KEINE Sperr-Status-ID '
+                    '[MIRKA-PROBLEM] FEHLERSCHUTZ Modus "AN", aber KEINE Sperr-Status-ID '
                     . 'in Tab 8 hinterlegt - es wurde NICHTS geaendert (nur gemeldet).',
                     ['auftrag' => $auftragsId]
                 );
@@ -227,7 +238,7 @@ class OrderPriceGuardListener
         } catch (\Throwable $fehler) {
             // Der Fehlerschutz darf den Bestellabschluss NIEMALS stoeren.
             $this->guardLog(
-                'MirkaBeltCalculator [DIAG][Guard]: Exception im Fehlerschutz.',
+                '[MIRKA-PROBLEM] Preis-Guard Exception: ' . $fehler->getMessage(),
                 [
                     'message' => $fehler->getMessage(),
                     'file'    => $fehler->getFile(),
@@ -270,13 +281,13 @@ class OrderPriceGuardListener
 
             if ($istStatus !== null && $differenz < 0.001) {
                 $this->guardLog(
-                    'MirkaBeltCalculator [FEHLERSCHUTZ] Auftrag ' . $auftragsId
+                    '[MIRKA-PROBLEM] FEHLERSCHUTZ Auftrag ' . $auftragsId
                     . ' auf Status ' . $statusId . ' gesperrt. Nachkontrolle OK.',
                     ['auftrag' => $auftragsId, 'statusId' => $statusId]
                 );
             } else {
                 $this->guardLog(
-                    'MirkaBeltCalculator [FEHLERSCHUTZ] Auftrag ' . $auftragsId
+                    '[MIRKA-PROBLEM] FEHLERSCHUTZ Auftrag ' . $auftragsId
                     . ': Status-Setzen NICHT bestaetigt (Soll ' . $statusId . ', Ist '
                     . ($istStatus !== null ? $istStatus : 'nicht lesbar')
                     . '). BITTE MANUELL PRUEFEN.',
@@ -285,7 +296,7 @@ class OrderPriceGuardListener
             }
         } catch (\Throwable $fehler) {
             $this->guardLog(
-                'MirkaBeltCalculator [FEHLERSCHUTZ] Auftrag ' . $auftragsId
+                '[MIRKA-PROBLEM] FEHLERSCHUTZ Auftrag ' . $auftragsId
                 . ': Sperren fehlgeschlagen (' . $fehler->getMessage()
                 . '). BITTE MANUELL PRUEFEN.',
                 ['auftrag' => $auftragsId]
