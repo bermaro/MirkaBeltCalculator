@@ -27,6 +27,12 @@ class PriceCalculationService
 {
     use Loggable;
 
+    /**
+     * NEU v1.5.7: EINE feste Log-Kennung fuer ALLE Mirka-Meldungen
+     * (siehe Listener). Ein Filter im Log zeigt alles.
+     */
+    const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
+
     public function calculate($productGroupCode, $grit, $jointCode, $width, $length)
     {
         /** @var PluginConfig $config */
@@ -66,7 +72,7 @@ class PriceCalculationService
         $verkaufspreis      = round($verkaufspreisNetto * (1.0 + $vatRate / 100.0), 2);
 
         if ($config->isDebugMode()) {
-            $this->getLogger(__METHOD__)->info(
+            $this->getLogger(self::LOG_KENNUNG)->info(
                 'MirkaBeltCalculator: Preis berechnet.',
                 [
                     'uvp'                => $uvp,
