@@ -508,6 +508,10 @@ class OrderRenameListener
             // Sperr-Status (falls in Tab 8 hinterlegt) - sonst nur melden.
             $this->fuehreGuardAus($config, $auftragsId, $guardProbleme);
 
+            // NEU v1.5.4: SAMMELZEILE pro Auftrag - alles direkt im
+            // Nachrichtentext (Suchbegriff im Log: MIRKA-KURZ).
+            $this->kurzMeldungAuftrag($auftragsId, $hauptPositionen, $guardProbleme);
+
             if (count($neueNamen) === 0) {
                 return; // Nichts umzubenennen.
             }
@@ -694,6 +698,56 @@ class OrderRenameListener
      * @param int          $auftragsId
      * @param array        $guardProbleme  Liste verdaechtiger Positionen
      */
+    /**
+     * NEU v1.5.4: Schreibt EINE Sammelzeile pro Auftrag, in der alles
+     * Wichtige direkt im Nachrichtentext steht - also in der Log-Liste
+     * (Spalte "Nachricht") sofort lesbar, ohne etwas aufklappen zu
+     * muessen. Suchbegriff im Log: MIRKA-KURZ
+     *
+     * Beispiel bei sauberem Auftrag:
+     *   [MIRKA-KURZ] AUFTRAG 329642 | Konfig-Positionen=2 | OK=2 | PROBLEM=0
+     * Beispiel bei Fehler:
+     *   [MIRKA-KURZ] AUFTRAG 329642 | Konfig-Positionen=2 | OK=1 | PROBLEM=1
+     *   || Position 418561: 0/6 Werte, fehlt: Qualitaet,Koernung,...
+     *
+     * @param int   $auftragsId
+     * @param array $hauptPositionen
+     * @param array $guardProbleme
+     */
+    private function kurzMeldungAuftrag($auftragsId, $hauptPositionen, $guardProbleme)
+    {
+        try {
+            $gesamt   = is_array($hauptPositionen) ? count($hauptPositionen) : 0;
+            $probleme = is_array($guardProbleme) ? count($guardProbleme) : 0;
+            $ok       = $gesamt - $probleme;
+            if ($ok < 0) {
+                $ok = 0;
+            }
+
+            $text = '[MIRKA-KURZ] AUFTRAG ' . (int) $auftragsId
+                . ' | Konfig-Positionen=' . $gesamt
+                . ' | OK=' . $ok
+                . ' | PROBLEM=' . $probleme;
+
+            if ($probleme > 0) {
+                foreach ($guardProbleme as $p) {
+                    $posId    = isset($p['positionsId']) ? (int) $p['positionsId'] : 0;
+                    $gefunden = isset($p['gefunden']) ? (int) $p['gefunden'] : 0;
+                    $fehlende = (isset($p['fehlende']) && is_array($p['fehlende']))
+                        ? implode(',', $p['fehlende']) : '?';
+                    $text .= ' || Position ' . $posId . ': ' . $gefunden
+                        . '/6 Werte, fehlt: ' . $fehlende;
+                }
+            }
+
+            // Klartext als Nachricht (nicht ueber den Uebersetzungs-
+            // Schluessel), damit der Text direkt in der Log-Liste steht.
+            $this->getLogger(__METHOD__)->error($text);
+        } catch (\Throwable $egal) {
+            // Sammelzeile ist reine Bequemlichkeit - Fehler ignorieren.
+        }
+    }
+
     private function fuehreGuardAus($config, $auftragsId, $guardProbleme)
     {
         try {
