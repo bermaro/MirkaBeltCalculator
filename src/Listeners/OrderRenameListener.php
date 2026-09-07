@@ -485,7 +485,7 @@ class OrderRenameListener
                 // konnte auch fremde Property-IDs mitzaehlen.
                 if (count($fehlende) > 0) {
                     $nichtLeer = 6 - count($fehlende);
-                    $this->wichtig('[DIAG][Rename] Position ' . $hauptId
+                    $this->wichtig('[MIRKA-PROBLEM] Position ' . $hauptId
                         . ': nur ' . $nichtLeer . '/6 Mirka-Werte vorhanden, fehlt: '
                         . implode(',', $fehlende)
                         . ' - Name bleibt unveraendert.');
@@ -622,7 +622,7 @@ class OrderRenameListener
                     . 'Nachkontrolle OK (Betrag ' . $betragNachher
                     . ', Positionen ' . $positionenNachher . ').');
             } else {
-                $this->wichtig('[DIAG][Rename] ⚠️ ABWEICHUNG nach dem Schreiben! '
+                $this->wichtig('[MIRKA-PROBLEM] ⚠️ ABWEICHUNG nach dem Schreiben! '
                     . 'Betrag vorher=' . $betragVorher . ' nachher=' . $betragNachher
                     . ', Positionen vorher=' . $positionenVorher
                     . ' nachher=' . $positionenNachher
@@ -631,7 +631,7 @@ class OrderRenameListener
             }
         } catch (\Throwable $fehler) {
             // Bestellabschluss NIEMALS stoeren - nur loggen.
-            $this->diag('[DIAG][Rename] FEHLER: ' . $fehler->getMessage());
+            $this->wichtig('[MIRKA-PROBLEM] Rename-FEHLER: ' . $fehler->getMessage());
         }
     }
 
@@ -663,7 +663,7 @@ class OrderRenameListener
                 return $order;
             }
         } catch (\Throwable $egal) {
-            $this->diag('[DIAG][Rename] Laden MIT Relationen fehlgeschlagen ('
+            $this->wichtig('[MIRKA-PROBLEM] Laden MIT Relationen fehlgeschlagen ('
                 . $egal->getMessage() . ') - versuche ohne.');
         }
 
@@ -675,7 +675,7 @@ class OrderRenameListener
                 return $order;
             }
         } catch (\Throwable $egal) {
-            $this->diag('[DIAG][Rename] Laden OHNE Relationen fehlgeschlagen ('
+            $this->wichtig('[MIRKA-PROBLEM] Laden OHNE Relationen fehlgeschlagen ('
                 . $egal->getMessage() . ') - nutze Event-Objekt.');
         }
 
@@ -803,13 +803,13 @@ class OrderRenameListener
                 return; // Alles vollstaendig - nichts zu melden.
             }
 
-            $this->wichtig('[DIAG][Rename][GUARD] Auftrag ' . $auftragsId . ': '
+            $this->wichtig('[MIRKA-PROBLEM] GUARD Auftrag ' . $auftragsId . ': '
                 . count($guardProbleme) . ' Konfigurator-Position(en) mit '
                 . 'UNVOLLSTAENDIGEN Bestelleigenschaften - BITTE PRUEFEN. '
                 . 'Details: ' . json_encode($guardProbleme));
 
             if ($modus !== 'on') {
-                $this->wichtig('[DIAG][Rename][GUARD] Modus "nur melden" - es '
+                $this->diag('[DIAG][Guard] Modus "nur melden" - es '
                     . 'wurde NICHTS am Auftrag geaendert.');
                 return;
             }
@@ -817,7 +817,7 @@ class OrderRenameListener
             // Modus 'on': Sperr-Status setzen, falls hinterlegt.
             $statusId = $config->getFailClosedStatusId();
             if ($statusId <= 0) {
-                $this->wichtig('[DIAG][Rename][GUARD] Modus "AN", aber KEINE '
+                $this->wichtig('[MIRKA-PROBLEM] Fehlerschutz steht auf AN, aber KEINE '
                     . 'Sperr-Status-ID in Tab 8 - es wurde nur gemeldet.');
                 return;
             }
@@ -825,11 +825,11 @@ class OrderRenameListener
             /** @var OrderRepositoryContract $orderRepo */
             $orderRepo = pluginApp(OrderRepositoryContract::class);
             $orderRepo->updateOrder(['statusId' => $statusId], $auftragsId);
-            $this->wichtig('[DIAG][Rename][GUARD] Auftrag ' . $auftragsId
+            $this->wichtig('[MIRKA-PROBLEM] GUARD Auftrag ' . $auftragsId
                 . ' auf Sperr-Status ' . $statusId . ' gesetzt.');
         } catch (\Throwable $fehler) {
             // Der Guard darf den Umbenenner/Auftrag NIEMALS stoeren.
-            $this->wichtig('[DIAG][Rename][GUARD] Guard-Fehler (ignoriert): '
+            $this->wichtig('[MIRKA-PROBLEM] Guard-Fehler: '
                 . $fehler->getMessage());
         }
     }
@@ -854,6 +854,28 @@ class OrderRenameListener
 
             $benutzteIndizes = [];
 
+            // NEU v1.5.12 (SICHERHEIT): Vorab zaehlen, wie viele
+            // Hauptpositionen JEWEILS denselben Bruttopreis haben.
+            // Grund: v1.5.11 pruefte nur die Zettel-Seite. Bei
+            //   Position A = 100,00 | Position B = 100,00 | nur EIN Zettel
+            // bekam Position A den Zettel - obwohl niemand weiss, ob er
+            // dorthin gehoert. Position A haette FREMDE 6/6-Werte
+            // bekommen und waere falsch umbenannt worden.
+            // Jetzt gilt: Zuordnung nur, wenn der Preis auf BEIDEN
+            // Seiten eindeutig ist (genau 1 Position UND genau 1 Zettel).
+            $preisAnzahlPositionen = [];
+            foreach ($hauptIds as $zaehlId) {
+                $zaehlPreis = $this->leseBruttoEinzelpreis($hauptPositionen[$zaehlId]);
+                if ($zaehlPreis !== null) {
+                    // Preis als Schluessel mit 2 Nachkommastellen (Cent-genau).
+                    $schluessel = (string) round((float) $zaehlPreis, 2);
+                    if (!isset($preisAnzahlPositionen[$schluessel])) {
+                        $preisAnzahlPositionen[$schluessel] = 0;
+                    }
+                    $preisAnzahlPositionen[$schluessel]++;
+                }
+            }
+
             foreach ($hauptIds as $hauptId) {
                 $position = $hauptPositionen[$hauptId];
                 $posPreis = $this->leseBruttoEinzelpreis($position);
@@ -861,8 +883,46 @@ class OrderRenameListener
                 $gewaehlterIndex = -1;
 
                 if ($posPreis !== null) {
-                    // Preis lesbar: vom NEUESTEN Zettel rueckwaerts den
-                    // ersten unbenutzten mit passendem Preis suchen.
+                    // NEU v1.5.12: ZUERST die Positions-Seite pruefen.
+                    // Haben MEHRERE Auftragspositionen denselben Preis, ist
+                    // eine preisbasierte Zuordnung grundsaetzlich nicht
+                    // beweisbar - dann bekommt KEINE dieser Positionen einen
+                    // Zettel (nicht erst die zweite). Sonst koennte die erste
+                    // Position fremde Werte erhalten und falsch umbenannt
+                    // werden, waehrend der Auftrag nur teilweise auffaellt.
+                    $preisSchluessel = (string) round((float) $posPreis, 2);
+                    $anzahlPositionenMitPreis = isset($preisAnzahlPositionen[$preisSchluessel])
+                        ? $preisAnzahlPositionen[$preisSchluessel] : 0;
+                    if ($anzahlPositionenMitPreis > 1) {
+                        $this->wichtig('[MIRKA-PROBLEM] Zettel-Zuordnung mehrdeutig'
+                            . ' | Hauptposition=' . (int) $hauptId
+                            . ' | Positionspreis=' . $posPreis
+                            . ' | HauptpositionenMitDiesemPreis=' . $anzahlPositionenMitPreis
+                            . ' | Es wurden KEINE Werte uebernommen'
+                            . ' (fail-safe: bei gleichem Preis ist nicht beweisbar,'
+                            . ' welcher Zettel zu welcher Position gehoert).');
+                        continue;
+                    }
+
+                    // NEU v1.5.11 (SICHERHEIT): Frueher wurde vom neuesten
+                    // Zettel rueckwaerts der ERSTE passende genommen und
+                    // die Suche abgebrochen. Haben zwei verschiedene
+                    // Konfigurationen zufaellig denselben Bruttopreis, war
+                    // die Zuordnung nicht eindeutig - die Baender konnten
+                    // VERTAUSCHT werden. Beide Positionen haetten danach
+                    // 6/6 Werte gehabt, der Guard haette "OK" gemeldet und
+                    // es waere das falsche Band gefertigt worden.
+                    // Jetzt werden ALLE passenden Zettel gezaehlt:
+                    //   0 Treffer  -> wie bisher: Problem, uebersprungen
+                    //   1 Treffer  -> eindeutig, wird verwendet
+                    //  >1 Treffer  -> MEHRDEUTIG: KEINEN verwenden, melden.
+                    //                 Die Position bleibt unvollstaendig,
+                    //                 der 6/6-Guard schlaegt an. Lieber ein
+                    //                 Auftrag zur Pruefung als ein falsch
+                    //                 zugeordnetes Schleifband.
+                    // Bewusst KEINE Reihenfolgen-Heuristik ("aeltester zu
+                    // aeltestem") - die waere geraten, nicht belegt.
+                    $treffer = [];
                     for ($i = count($liste) - 1; $i >= 0; $i--) {
                         if (isset($benutzteIndizes[$i])) {
                             continue;
@@ -879,13 +939,25 @@ class OrderRenameListener
                                 $differenz = -$differenz;
                             }
                             if ($differenz < 0.005) {
-                                $gewaehlterIndex = $i;
-                                break;
+                                $treffer[] = $i;   // sammeln, NICHT abbrechen
                             }
                         }
                     }
+
+                    if (count($treffer) === 1) {
+                        $gewaehlterIndex = $treffer[0];
+                    } elseif (count($treffer) > 1) {
+                        $this->wichtig('[MIRKA-PROBLEM] Zettel-Zuordnung mehrdeutig'
+                            . ' | Hauptposition=' . (int) $hauptId
+                            . ' | Positionspreis=' . $posPreis
+                            . ' | passende Session-Zettel=' . count($treffer)
+                            . ' | Es wurden KEINE Werte uebernommen'
+                            . ' (fail-safe, sonst koennten die Baender vertauscht werden).');
+                        continue;
+                    }
+
                     if ($gewaehlterIndex < 0) {
-                        $this->wichtig('[DIAG][Rename] ⚠️ Kein Zettel passt zum '
+                        $this->wichtig('[MIRKA-PROBLEM] Kein Zettel passt zum '
                             . 'Positionspreis ' . $posPreis . ' (Haupt ' . (int) $hauptId
                             . ') - Position wird uebersprungen (fail-safe).');
                         continue;
@@ -898,7 +970,7 @@ class OrderRenameListener
                         $this->diag('[DIAG][Rename] Positionspreis nicht lesbar - '
                             . 'eindeutiger Fall (1 Position, 1 Zettel), Zettel wird verwendet.');
                     } else {
-                        $this->wichtig('[DIAG][Rename] ⚠️ Positionspreis nicht lesbar und '
+                        $this->wichtig('[MIRKA-PROBLEM] ⚠️ Positionspreis nicht lesbar und '
                             . 'Lage mehrdeutig (' . count($hauptIds) . ' Position(en), '
                             . count($liste) . ' Zettel) - uebersprungen (fail-safe).');
                         continue;
@@ -935,7 +1007,7 @@ class OrderRenameListener
                 $ablage->setValue('mirkaKonfigListe', count($rest) > 0 ? json_encode($rest) : '');
             }
         } catch (\Throwable $fehler) {
-            $this->diag('[DIAG][Rename] Zettel-Lesen fehlgeschlagen: '
+            $this->wichtig('[MIRKA-PROBLEM] Zettel-Lesen fehlgeschlagen: '
                 . $fehler->getMessage());
         }
     }
