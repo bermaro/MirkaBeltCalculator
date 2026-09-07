@@ -141,6 +141,13 @@ class OrderRenameListener
      */
     const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
 
+    /**
+     * NEU v1.5.8: Merker fuer den Debug-Zustand (Tab 6), damit diag()
+     * die Konfiguration nur einmal pro Auftrag laden muss.
+     */
+    private $debugGeprueft = false;
+    private $debugAn = true;
+
     /** Positionstyp: normale Variantenposition (der Sammelartikel). */
     const TYP_VARIANTENPOSITION = 1;
 
@@ -186,7 +193,22 @@ class OrderRenameListener
             /** @var PluginConfig $config */
             $config = pluginApp(PluginConfig::class);
 
-            $modus = $config->getRenamePositionsMode();
+            $renameModus = $config->getRenamePositionsMode();
+            $guardModus  = $config->getFailClosedMode();
+
+            // NEU v1.5.7: Aussteigen NUR, wenn BEIDE Funktionen aus sind.
+            //  - Tab 7 (Umbenennen) aus + Tab 8 (Fehlerschutz) log/on
+            //    -> Datenaufbereitung + Guard muessen weiterlaufen.
+            //  - BEIDE aus -> gar nichts tun. Wichtig, weil sonst
+            //    uebernehmeZettelWerte() liefe und Session-Zettel
+            //    verbrauchen wuerde, obwohl niemand sie braucht.
+            // (v1.5.3 hatte den frueheren "nur Tab 7"-Ausstieg entfernt,
+            //  aber keinen Ersatz fuer den Fall "beide aus" gesetzt.)
+            if ($renameModus === 'off' && $guardModus === 'off') {
+                return;
+            }
+
+            $modus = $renameModus;
             // NEU v1.5.3: KEIN frueher Ausstieg mehr bei modus==='off'.
             // Frueher stand hier "if (off) return;" - das haette aber den
             // NEUEN Guard (weiter unten) mit abgeschaltet, obwohl der einen
@@ -451,13 +473,22 @@ class OrderRenameListener
                     ];
                 }
 
-                // Ohne die fuenf Pflichtwerte wird NICHT umbenannt
+                // Ohne ALLE SECHS Pflichtwerte wird NICHT umbenannt
                 // (kein Raten, lieber alter Name als falscher Name).
-                if ($code === '' || $grit === '' || $joint === ''
-                    || $breite === '' || $laenge === '') {
-                    $this->diag('[DIAG][Rename] Position ' . $hauptId
-                        . ': Werte unvollstaendig (gefunden: '
-                        . count($w) . ') - Name bleibt unveraendert.');
+                // NEU v1.5.8 (Punkt B): Die Mirka-Nummer zaehlt jetzt
+                // ebenfalls als Pflichtwert - vorher wurden nur fuenf
+                // Werte verlangt, eine Position ohne Mirka-Nr. wurde also
+                // umbenannt, obwohl der Guard sie zu Recht als 5/6 meldete.
+                // Jetzt gilt einheitlich: nur 6/6 ist vollstaendig.
+                // NEU v1.5.8 (Punkt A): Die Meldung zaehlt nur noch die
+                // sechs erwarteten Mirka-Werte; das fruehere count($w)
+                // konnte auch fremde Property-IDs mitzaehlen.
+                if (count($fehlende) > 0) {
+                    $nichtLeer = 6 - count($fehlende);
+                    $this->wichtig('[DIAG][Rename] Position ' . $hauptId
+                        . ': nur ' . $nichtLeer . '/6 Mirka-Werte vorhanden, fehlt: '
+                        . implode(',', $fehlende)
+                        . ' - Name bleibt unveraendert.');
                     continue;
                 }
 
@@ -535,7 +566,14 @@ class OrderRenameListener
             }
 
             if ($modus !== 'on') {
-                $this->diag('[DIAG][Rename] Modus "nur protokollieren": '
+                // NEU v1.5.7: Text unterscheidet jetzt korrekt zwischen
+                // "aus" (Tab 7 = off) und "nur protokollieren" (log).
+                // Frueher stand bei BEIDEN "nur protokollieren" im Log -
+                // das war bei abgeschalteter Umbenennung irrefuehrend.
+                $modusText = ($modus === 'off')
+                    ? 'AUS (Tab 7 abgeschaltet)'
+                    : 'nur protokollieren';
+                $this->diag('[DIAG][Rename] Umbenennen ' . $modusText . ': '
                     . 'Es wurde NICHTS am Auftrag geaendert.');
                 return;
             }
@@ -584,7 +622,7 @@ class OrderRenameListener
                     . 'Nachkontrolle OK (Betrag ' . $betragNachher
                     . ', Positionen ' . $positionenNachher . ').');
             } else {
-                $this->diag('[DIAG][Rename] ⚠️ ABWEICHUNG nach dem Schreiben! '
+                $this->wichtig('[DIAG][Rename] ⚠️ ABWEICHUNG nach dem Schreiben! '
                     . 'Betrag vorher=' . $betragVorher . ' nachher=' . $betragNachher
                     . ', Positionen vorher=' . $positionenVorher
                     . ' nachher=' . $positionenNachher
@@ -765,13 +803,13 @@ class OrderRenameListener
                 return; // Alles vollstaendig - nichts zu melden.
             }
 
-            $this->diag('[DIAG][Rename][GUARD] Auftrag ' . $auftragsId . ': '
+            $this->wichtig('[DIAG][Rename][GUARD] Auftrag ' . $auftragsId . ': '
                 . count($guardProbleme) . ' Konfigurator-Position(en) mit '
                 . 'UNVOLLSTAENDIGEN Bestelleigenschaften - BITTE PRUEFEN. '
                 . 'Details: ' . json_encode($guardProbleme));
 
             if ($modus !== 'on') {
-                $this->diag('[DIAG][Rename][GUARD] Modus "nur melden" - es '
+                $this->wichtig('[DIAG][Rename][GUARD] Modus "nur melden" - es '
                     . 'wurde NICHTS am Auftrag geaendert.');
                 return;
             }
@@ -779,7 +817,7 @@ class OrderRenameListener
             // Modus 'on': Sperr-Status setzen, falls hinterlegt.
             $statusId = $config->getFailClosedStatusId();
             if ($statusId <= 0) {
-                $this->diag('[DIAG][Rename][GUARD] Modus "AN", aber KEINE '
+                $this->wichtig('[DIAG][Rename][GUARD] Modus "AN", aber KEINE '
                     . 'Sperr-Status-ID in Tab 8 - es wurde nur gemeldet.');
                 return;
             }
@@ -787,11 +825,11 @@ class OrderRenameListener
             /** @var OrderRepositoryContract $orderRepo */
             $orderRepo = pluginApp(OrderRepositoryContract::class);
             $orderRepo->updateOrder(['statusId' => $statusId], $auftragsId);
-            $this->diag('[DIAG][Rename][GUARD] Auftrag ' . $auftragsId
+            $this->wichtig('[DIAG][Rename][GUARD] Auftrag ' . $auftragsId
                 . ' auf Sperr-Status ' . $statusId . ' gesetzt.');
         } catch (\Throwable $fehler) {
             // Der Guard darf den Umbenenner/Auftrag NIEMALS stoeren.
-            $this->diag('[DIAG][Rename][GUARD] Guard-Fehler (ignoriert): '
+            $this->wichtig('[DIAG][Rename][GUARD] Guard-Fehler (ignoriert): '
                 . $fehler->getMessage());
         }
     }
@@ -847,7 +885,7 @@ class OrderRenameListener
                         }
                     }
                     if ($gewaehlterIndex < 0) {
-                        $this->diag('[DIAG][Rename] ⚠️ Kein Zettel passt zum '
+                        $this->wichtig('[DIAG][Rename] ⚠️ Kein Zettel passt zum '
                             . 'Positionspreis ' . $posPreis . ' (Haupt ' . (int) $hauptId
                             . ') - Position wird uebersprungen (fail-safe).');
                         continue;
@@ -860,7 +898,7 @@ class OrderRenameListener
                         $this->diag('[DIAG][Rename] Positionspreis nicht lesbar - '
                             . 'eindeutiger Fall (1 Position, 1 Zettel), Zettel wird verwendet.');
                     } else {
-                        $this->diag('[DIAG][Rename] ⚠️ Positionspreis nicht lesbar und '
+                        $this->wichtig('[DIAG][Rename] ⚠️ Positionspreis nicht lesbar und '
                             . 'Lage mehrdeutig (' . count($hauptIds) . ' Position(en), '
                             . count($liste) . ' Zettel) - uebersprungen (fail-safe).');
                         continue;
@@ -996,13 +1034,49 @@ class OrderRenameListener
      *
      * @param string $text
      */
+    /**
+     * NEU v1.5.8: ROUTINE-Diagnose.
+     * Schreibt den Text als KLARTEXT ins Log (nicht mehr ueber den
+     * Uebersetzungs-Schluessel) - dadurch steht die Meldung direkt in
+     * der Log-Liste, Spalte "Nachricht". Kein Aufklappen mehr noetig.
+     *
+     * Diese Routine-Zeilen erscheinen NUR, wenn in Tab 6 der
+     * Debug-Modus auf AN steht. Im Normalbetrieb bleibt das Log
+     * dadurch schlank; fuer eine Fehlersuche schaltet man Debug an.
+     * Problemmeldungen laufen ueber wichtig() und erscheinen IMMER.
+     *
+     * @param string $text
+     */
     private function diag($text)
     {
-        // NEU v1.5.6: feste Kennung statt __METHOD__ - alle Zeilen
-        // dieses Listeners liegen im Log unter EINEM Identifikator.
-        $this->getLogger(self::LOG_KENNUNG)->error(
-            'MirkaBeltCalculator::Debug.properties',
-            $text
-        );
+        // NEU v1.5.8: Debug-Zustand nur EINMAL ermitteln und merken -
+        // diag() wird pro Auftrag rund 30x aufgerufen, und jedes Mal die
+        // Konfiguration neu zu laden waere unnoetiger Aufwand.
+        if ($this->debugGeprueft === false) {
+            $this->debugGeprueft = true;
+            try {
+                /** @var PluginConfig $cfg */
+                $cfg = pluginApp(PluginConfig::class);
+                $this->debugAn = $cfg->isDebugMode();
+            } catch (\Throwable $egal) {
+                $this->debugAn = true; // Im Zweifel lieber loggen.
+            }
+        }
+        if (!$this->debugAn) {
+            return; // Routine-Rauschen im Normalbetrieb unterdruecken.
+        }
+        $this->getLogger(self::LOG_KENNUNG)->error($text);
+    }
+
+    /**
+     * NEU v1.5.8: WICHTIGE Meldung - erscheint IMMER, unabhaengig vom
+     * Debug-Modus. Fuer Probleme, Guard-Alarme und Zusammenfassungen.
+     * Ebenfalls Klartext, also direkt in der Log-Liste lesbar.
+     *
+     * @param string $text
+     */
+    private function wichtig($text)
+    {
+        $this->getLogger(self::LOG_KENNUNG)->error($text);
     }
 }
