@@ -80,7 +80,7 @@ class BasketItemListener
             $basketItem = $event->getBasketItem();
             if ($basketItem === null) {
                 // error() = garantiert sichtbar
-                $this->getLogger(__METHOD__)->error(
+                $this->getLogger(self::LOG_KENNUNG)->error(
                     'MirkaBeltCalculator [DIAG]: Kein BasketItem im Event erhalten.'
                 );
                 return;
@@ -89,7 +89,7 @@ class BasketItemListener
             $variationId = (int) $basketItem->variationId;
 
             // DIAG 1: Feuert AfterBasketItemAdd ueberhaupt? (garantiert sichtbar)
-            $this->getLogger(__METHOD__)->error(
+            $this->getLogger(self::LOG_KENNUNG)->error(
                 'MirkaBeltCalculator [DIAG]: AfterBasketItemAdd ausgeloest.',
                 [
                     'variationId'   => $variationId,
@@ -110,7 +110,7 @@ class BasketItemListener
 
             // DIAG 2: VOLLSTAENDIGER Dump der neuen Struktur (propertyId/type/name/value).
             // Hieraus lesen wir die echten propertyId-Zuordnungen ab.
-            $this->getLogger(__METHOD__)->error(
+            $this->getLogger(self::LOG_KENNUNG)->error(
                 'MirkaBeltCalculator [DIAG]: originOrderVariationProperties (VOLLDUMP).',
                 [
                     'istArray' => is_array($orderProperties),
@@ -120,7 +120,7 @@ class BasketItemListener
             );
 
             if (!is_array($orderProperties) || empty($orderProperties)) {
-                $this->getLogger(__METHOD__)->error(
+                $this->getLogger(self::LOG_KENNUNG)->error(
                     'MirkaBeltCalculator [DIAG]: Keine originOrderVariationProperties gefunden (leer).',
                     ['variationId' => $variationId]
                 );
@@ -135,7 +135,7 @@ class BasketItemListener
             // -------------------------------------------------------------
             $configData = $this->extractConfiguration($config, $orderProperties);
             if ($configData === null) {
-                $this->getLogger(__METHOD__)->error(
+                $this->getLogger(self::LOG_KENNUNG)->error(
                     'MirkaBeltCalculator [DIAG]: Konfiguration unvollstaendig mit aktuell konfigurierten IDs. '
                     . 'Bitte VOLLDUMP oben pruefen und echte propertyId-Zuordnung ableiten.',
                     ['erwarteteIds' => [
@@ -159,7 +159,7 @@ class BasketItemListener
             );
 
             if (!$result['success']) {
-                $this->getLogger(__METHOD__)->error(
+                $this->getLogger(self::LOG_KENNUNG)->error(
                     'MirkaBeltCalculator [DIAG]: Preisberechnung fehlgeschlagen.',
                     $result
                 );
@@ -174,7 +174,7 @@ class BasketItemListener
             $basketItem->givenPrice    = $result['verkaufspreis'];
 
             // DIAG 3: Preis wurde im Listener gesetzt (garantiert sichtbar).
-            $this->getLogger(__METHOD__)->error(
+            $this->getLogger(self::LOG_KENNUNG)->error(
                 'MirkaBeltCalculator [DIAG]: Preis im Listener gesetzt (useGivenPrice/givenPrice).',
                 [
                     'variationId'    => $variationId,
@@ -190,14 +190,14 @@ class BasketItemListener
             try {
                 $this->merkeKonfigurationFuerRename($orderProperties, (float) $result['verkaufspreis']);
             } catch (\Throwable $egal) {
-                $this->getLogger(__METHOD__)->error(
+                $this->getLogger(self::LOG_KENNUNG)->error(
                     'MirkaBeltCalculator [DIAG]: Zettel konnte nicht gespeichert werden.',
                     ['message' => $egal->getMessage()]
                 );
             }
 
         } catch (\Throwable $t) {
-            $this->getLogger(__METHOD__)->error(
+            $this->getLogger(self::LOG_KENNUNG)->error(
                 'MirkaBeltCalculator [DIAG]: Exception im BasketItemListener.',
                 [
                     'exception' => 'Throwable',
@@ -252,7 +252,7 @@ class BasketItemListener
         }
         $ablage->setValue('mirkaKonfigListe', json_encode($liste));
 
-        $this->getLogger(__METHOD__)->error(
+        $this->getLogger(self::LOG_KENNUNG)->error(
             'MirkaBeltCalculator [DIAG]: Zettel fuer Umbenenner in Sitzung gespeichert.',
             [
                 'anzahlEintraege' => count($liste),
@@ -283,7 +283,7 @@ class BasketItemListener
                 . ' | Laenge='    . $this->zettelWert($w, $cfg->getPropertyIdLaenge())
                 . ' | MirkaNr='   . $this->zettelWert($w, $cfg->getPropertyIdMirkaCode())
                 . ' | Preis(brutto)=' . (float) $preis
-                . ' | Zettel im Warenkorb=' . count($liste)
+                . ' | Session-Zettel=' . count($liste)
             );
         } catch (\Throwable $egal) {
             // Sammelzeile ist reine Bequemlichkeit - Fehler ignorieren.
