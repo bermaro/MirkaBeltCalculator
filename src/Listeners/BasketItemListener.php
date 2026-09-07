@@ -59,6 +59,13 @@ class BasketItemListener
     use Loggable;
 
     /**
+     * NEU v1.5.6: EINE feste Log-Kennung fuer alle Mirka-Sammelzeilen.
+     * Dadurch liegen Warenkorb- UND Auftragsmeldungen im Log unter
+     * demselben Identifikator - ein einziger Filter zeigt alles.
+     */
+    const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
+
+    /**
      * Wird vom Event-Dispatcher aufgerufen, NACHDEM ein Artikel in den
      * Warenkorb gelegt wurde.
      */
@@ -265,7 +272,9 @@ class BasketItemListener
             /** @var PluginConfig $cfg */
             $cfg = pluginApp(PluginConfig::class);
             $w   = $eintrag['werte'];
-            $this->getLogger(__METHOD__)->error(
+            // Feste Kennung: ALLE Mirka-Sammelzeilen landen unter einem
+            // einzigen Identifikator -> im Log genau EIN Filter noetig.
+            $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-KURZ] WARENKORB'
                 . ' | Qualitaet=' . $this->zettelWert($w, $cfg->getPropertyIdSchleifmittel())
                 . ' | Koernung='  . $this->zettelWert($w, $cfg->getPropertyIdKoernung())
