@@ -68,6 +68,13 @@ class OrderPriceGuardListener
 {
     use Loggable;
 
+    /**
+     * NEU v1.5.7: EINE feste Log-Kennung fuer ALLE Mirka-Meldungen.
+     * Dadurch reicht im Plenty-Log EIN Filter, um Warenkorb, Umbenenner,
+     * Vollstaendigkeits-Guard UND Preis-Guard gemeinsam zu sehen.
+     */
+    const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
+
     /** Positionstyp: normale Variantenposition (der Sammelartikel). */
     const TYP_VARIANTENPOSITION = 1;
 
@@ -370,6 +377,6 @@ class OrderPriceGuardListener
      */
     private function guardLog($meldung, $kontext = [])
     {
-        $this->getLogger(__METHOD__)->error($meldung, $kontext);
+        $this->getLogger(self::LOG_KENNUNG)->error($meldung, $kontext);
     }
 }
