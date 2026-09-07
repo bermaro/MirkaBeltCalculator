@@ -47,6 +47,12 @@ class MirkaApiClient
 {
     use Loggable;
 
+    /**
+     * NEU v1.5.7: EINE feste Log-Kennung fuer ALLE Mirka-Meldungen
+     * (siehe Listener). Ein Filter im Log zeigt alles.
+     */
+    const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
+
     public function fetchPrice($productGroupCode, $grit, $jointCode, $width, $length)
     {
         /** @var PluginConfig $config */
@@ -57,7 +63,7 @@ class MirkaApiClient
             $mockUvp = $config->getMockUvp();
 
             if ($config->isDebugMode()) {
-                $this->getLogger(__METHOD__)->info(
+                $this->getLogger(self::LOG_KENNUNG)->info(
                     'MirkaBeltCalculator: Mock-Modus aktiv - kein API-Aufruf.',
                     ['mockUvp' => $mockUvp]
                 );
@@ -73,7 +79,7 @@ class MirkaApiClient
         // ----- Echter API-Aufruf ueber den lib-Connector -----
         $baseUrl = $config->getProxyUrl();
         if ($baseUrl === '') {
-            $this->getLogger(__METHOD__)->error(
+            $this->getLogger(self::LOG_KENNUNG)->error(
                 'MirkaBeltCalculator: Keine Proxy-URL konfiguriert.'
             );
             return ['uvp' => null, 'source' => 'error', 'detail' => 'Keine Proxy-URL konfiguriert'];
@@ -105,7 +111,7 @@ class MirkaApiClient
             // 1) Hat Plenty selbst einen lib-Fehler geliefert? (error => true)
             if (is_array($result) && isset($result['error']) && $result['error'] === true) {
                 $msg = isset($result['error_msg']) ? $result['error_msg'] : 'unbekannter lib-Fehler';
-                $this->getLogger(__METHOD__)->error(
+                $this->getLogger(self::LOG_KENNUNG)->error(
                     'MirkaBeltCalculator: lib-Connector meldete Fehler.',
                     ['error_msg' => $msg]
                 );
@@ -114,7 +120,7 @@ class MirkaApiClient
 
             // 2) Erwartetes Format aus mirka_connector.php pruefen.
             if (!is_array($result) || !isset($result['ok'])) {
-                $this->getLogger(__METHOD__)->error(
+                $this->getLogger(self::LOG_KENNUNG)->error(
                     'MirkaBeltCalculator: Unerwartete Antwort vom lib-Connector.'
                 );
                 return ['uvp' => null, 'source' => 'error', 'detail' => 'Unerwartete lib-Antwort'];
@@ -124,7 +130,7 @@ class MirkaApiClient
             if ($result['ok'] !== true) {
                 $httpCode = isset($result['httpCode']) ? $result['httpCode'] : 0;
                 $connErr  = isset($result['connError']) ? (' / ' . $result['connError']) : '';
-                $this->getLogger(__METHOD__)->error(
+                $this->getLogger(self::LOG_KENNUNG)->error(
                     'MirkaBeltCalculator: HTTP-Aufruf fehlgeschlagen.',
                     ['httpCode' => $httpCode, 'connError' => $connErr]
                 );
@@ -136,7 +142,7 @@ class MirkaApiClient
             $data = json_decode($body, true);
 
             if (!is_array($data)) {
-                $this->getLogger(__METHOD__)->error(
+                $this->getLogger(self::LOG_KENNUNG)->error(
                     'MirkaBeltCalculator: Ungueltiges JSON von der Cloud Function.',
                     ['body' => $body]
                 );
@@ -145,7 +151,7 @@ class MirkaApiClient
 
             // Debug: kompletten Body anzeigen, damit man im Log sieht, was kam.
             if ($config->isDebugMode()) {
-                $this->getLogger(__METHOD__)->info(
+                $this->getLogger(self::LOG_KENNUNG)->info(
                     'MirkaBeltCalculator: Cloud-Function-Antwort erhalten.',
                     ['body' => $data]
                 );
@@ -164,7 +170,7 @@ class MirkaApiClient
                 $uvp = (float) $data['uvp'];
 
                 if ($config->isDebugMode()) {
-                    $this->getLogger(__METHOD__)->info(
+                    $this->getLogger(self::LOG_KENNUNG)->info(
                         'MirkaBeltCalculator: UVP von Cloud Function uebernommen.',
                         [
                             'uvp'                 => $uvp,
@@ -189,7 +195,7 @@ class MirkaApiClient
                 $uvp = (float) $data['Price']['Value'];
                 if ($uvp > 0) {
                     if ($config->isDebugMode()) {
-                        $this->getLogger(__METHOD__)->info(
+                        $this->getLogger(self::LOG_KENNUNG)->info(
                             'MirkaBeltCalculator: UVP aus roher Mirka-Struktur (Rueckfall).',
                             ['uvp' => $uvp]
                         );
@@ -208,7 +214,7 @@ class MirkaApiClient
             if (isset($data['success']) && $data['success'] === false && isset($data['error'])) {
                 $cfMessage = ' (' . (string) $data['error'] . ')';
             }
-            $this->getLogger(__METHOD__)->error(
+            $this->getLogger(self::LOG_KENNUNG)->error(
                 'MirkaBeltCalculator: Cloud-Function-Antwort enthielt keinen gueltigen uvp.',
                 ['body' => $data]
             );
@@ -219,7 +225,7 @@ class MirkaApiClient
             ];
 
         } catch (\Throwable $t) {
-            $this->getLogger(__METHOD__)->error(
+            $this->getLogger(self::LOG_KENNUNG)->error(
                 'MirkaBeltCalculator: Exception beim lib-Aufruf.',
                 ['message' => $t->getMessage()]
             );
