@@ -9,7 +9,7 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.5.17)
+ * OrderRenameListener (v1.5.22)
  *
  * ---------------------------------------------------------------------
  * KORREKTUR v1.5.15 (08.09.2026) - RUECKFALL WIEDERHERGESTELLT
@@ -32,12 +32,14 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *       werden koennen (die Luecke aus v1.5.13).
  *     - Die Eindeutigkeitsregeln aus v1.5.12 gelten unveraendert:
  *       Zuordnung nur, wenn der Preis auf BEIDEN Seiten eindeutig ist.
- *     - NEU v1.5.16: KEINE MISCHUNG. Der Zettel fuellt nur auf, wenn die
- *       Position ueber den direkten Weg GAR KEINEN Wert hat (0 von 6).
- *       Bei 1-5 direkten Werten wird nichts ergaenzt, sondern gemeldet.
- *       Grund: Sonst koennte ein fremder, preisgleicher Zettel die leeren
- *       Felder fuellen und es entstuende ein Misch-Band aus zwei
- *       Konfigurationen, das anschliessend als saubere 6/6 durchgeht.
+ *     - KEINE MISCHUNG (v1.5.16, in v1.5.22 verbessert): Hat die Position
+ *       schon einzelne direkte Werte, muss der Zettel bei JEDEM davon
+ *       denselben Wert tragen. Weicht auch nur einer ab, gehoert der Zettel
+ *       zu einem anderen Band - dann wird nichts ergaenzt und gemeldet.
+ *       Stimmen alle ueberein, werden die Luecken gefuellt.
+ *       (v1.5.16 hatte den Teilwert-Fall pauschal blockiert. Das war
+ *       strenger als noetig und gegenueber v1.5.12 eine Verschlechterung:
+ *       dort waere die Position vervollstaendigt worden.)
  *   Bekannte Grenze, ausdruecklich dokumentiert: Der Preis bleibt KEIN
  *   Identitaetsbeweis, und bei Sitzungswechsel (Login/Logout) ist der
  *   Zettel weg. Der Rueckfall ist eine Notversorgung, kein Beweis.
@@ -1017,7 +1019,15 @@ class OrderRenameListener
                 // verschiedenen Baendern, die anschliessend als saubere 6/6
                 // durchgeht (Guard meldet "OK"). Lieber sichtbar
                 // unvollstaendig als unsichtbar gemischt.
-                $nurVerbrauchen = ($anzahlDirekt > 0);
+                // v1.5.22 (Regressions-Korrektur): Frueher stand hier
+                // ($anzahlDirekt > 0). Damit blieb eine Position mit 1-5
+                // direkten Werten OHNE Zettel-Ergaenzung - v1.5.12 haette
+                // sie vervollstaendigt. Das war eine Verschlechterung
+                // gegenueber dem alten Stand. Stumm bleiben die Meldungen
+                // jetzt nur noch bei einer bereits vollstaendigen Position;
+                // der Teilwert-Fall wird weiter unten sauber geloest, indem
+                // die vorhandenen Werte mit dem Zettel VERGLICHEN werden.
+                $nurVerbrauchen = $schonVollstaendig;
 
                 $gewaehlterIndex = -1;
 
@@ -1109,23 +1119,47 @@ class OrderRenameListener
                     continue;
                 }
 
-                if ($anzahlDirekt > 0) {
-                    // 1-5 direkte Werte: NICHT mischen.
-                    $this->wichtig('[MIRKA-PROBLEM] Haupt ' . (int) $hauptId
-                        . ' hat ' . $anzahlDirekt . '/6 direkte Werte vom '
-                        . 'Warenkorb-Artikel. Der Sitzungs-Zettel wird NICHT '
-                        . 'zum Auffuellen benutzt (er wird nur verbraucht), weil '
-                        . 'sonst eine MISCHKONFIGURATION aus zwei verschiedenen '
-                        . 'Baendern entstehen koennte, die faelschlich als 6/6 '
-                        . 'durchgeht. Die Position bleibt unvollstaendig und '
-                        . 'wird gemeldet - bitte von Hand pruefen.');
-                    continue;
-                }
-
                 $eintrag  = $liste[$gewaehlterIndex];
                 $werteMap = (isset($eintrag['werte']) && is_array($eintrag['werte']))
                     ? $eintrag['werte']
                     : [];
+                // v1.5.22 - SCHUTZ GEGEN MISCHKONFIGURATION, ohne den
+                // Normalfall zu blockieren:
+                // Hat die Position schon einzelne direkte Werte (1-5), muss
+                // der Zettel bei JEDEM davon denselben Wert tragen. Stimmt
+                // auch nur einer nicht ueberein, gehoert der Zettel
+                // offensichtlich zu einem ANDEREN Band - dann wird nichts
+                // ergaenzt und laut gemeldet. Stimmen alle ueberein, ist die
+                // Zugehoerigkeit belegt und die Luecken werden gefuellt.
+                if ($anzahlDirekt > 0) {
+                    $konflikte = [];
+                    foreach ($werteMap as $vPropertyId => $vWert) {
+                        $vPid = (int) $vPropertyId;
+                        if ($vPid <= 0) {
+                            continue;
+                        }
+                        $direkt = isset($werte[$hauptId][$vPid])
+                            ? trim((string) $werte[$hauptId][$vPid]) : '';
+                        $ausZettel = trim((string) $vWert);
+                        if ($direkt !== '' && $ausZettel !== '' && $direkt !== $ausZettel) {
+                            $konflikte[] = 'Eigenschaft ' . $vPid . ': direkt "'
+                                . $direkt . '" vs. Zettel "' . $ausZettel . '"';
+                        }
+                    }
+                    if (count($konflikte) > 0) {
+                        $this->wichtig('[MIRKA-PROBLEM] Der Sitzungs-Zettel widerspricht '
+                            . 'den direkten Werten der Position ' . (int) $hauptId
+                            . ' - er gehoert offensichtlich zu einem ANDEREN Band und '
+                            . 'wird NICHT verwendet (sonst entstuende eine '
+                            . 'Mischkonfiguration). Abweichungen: '
+                            . implode(' | ', $konflikte));
+                        continue;
+                    }
+                    $this->diag('[DIAG][Rename] Haupt ' . (int) $hauptId . ': '
+                        . $anzahlDirekt . '/6 direkte Werte stimmen mit dem Zettel '
+                        . 'ueberein - die fehlenden werden ergaenzt.');
+                }
+
                 $ergaenzt = 0;
                 foreach ($werteMap as $propertyId => $wert) {
                     $pid  = (int) $propertyId;
