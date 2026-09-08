@@ -9,41 +9,31 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 /**
  * BasketToOrderListener (NEU v1.5.13)
  *
- * ZWECK / WARUM ES DIESEN LISTENER GIBT:
- *   Der bisherige Weg (v1.3.0 - v1.5.12) hat die sechs Kundenwerte
- *   (Qualitaet, Koernung, Verbindung, Breite, Laenge, Mirka-Nr.) beim
- *   In-den-Warenkorb-Legen als "Zettel" in die KUNDEN-SITZUNG geschrieben
- *   und beim Auftrag-Anlegen (OrderCreated) ueber den PREIS wieder
- *   zugeordnet. Das ist aus zwei Gruenden unzuverlaessig:
- *     1. Bei externer Bezahlung (z.B. Google Pay / PayPal) entsteht der
- *        Auftrag in einer ANDEREN Sitzung -> die Zettel sind weg -> alle
- *        Werte kommen leer am Auftrag an (real belegt: Auftrag 329670).
- *     2. Zwei Baender mit demselben Preis lassen sich per Preis nicht
- *        eindeutig zuordnen (Gleichpreis-Sperre v1.5.12 -> beide leer).
+ * ZWECK:
+ *   Der eigentliche Fix fuer den Datenverlust Warenkorb -> Auftrag.
+ *   Am offiziellen Plenty-Ereignis BeforeBasketItemToOrderItem werden die
+ *   sechs Kundenwerte (Qualitaet, Koernung, Verbindung, Breite, Laenge,
+ *   Mirka-Nr.) DIREKT vom Warenkorb-Artikel an die entstehende Auftrags-
+ *   position mitgegeben (addAdditionalVariationProperties). Damit entfaellt
+ *   die Abhaengigkeit vom Sitzungs-Zettel und vom Preisvergleich.
  *
- *   Plenty bietet fuer GENAU diesen Uebergang das offizielle Ereignis
- *   BeforeBasketItemToOrderItem an. Es liefert den konkreten Warenkorb-
- *   Artikel UNMITTELBAR bevor daraus eine Auftragsposition wird - und
- *   erlaubt ueber addAdditionalVariationProperties(), Eigenschaften direkt
- *   an die entstehende Auftragsposition mitzugeben. Damit brauchen wir
- *   KEINEN Sitzungs-Zettel und KEINEN Preisvergleich mehr.
+ *   Hintergrund: Bei externer Bezahlung (Google Pay / PayPal) entsteht der
+ *   Auftrag in einer anderen Sitzung -> Sitzungs-Zettel weg -> alle Werte
+ *   leer (real belegt: Auftrag 329670). Ausserdem blockierte die
+ *   Gleichpreis-Sperre gleich teure Baender. Beides faellt hier weg.
  *
- * VERHALTEN:
- *   - Reagiert nur auf die konfigurierte Sammelartikel-Variante (Tab 1),
- *     inkl. der optionalen Test-Variante -> gefahrloses Testen moeglich.
- *   - Liest die sechs Werte direkt aus dem Warenkorb-Artikel
- *     (originOrderVariationProperties, ersatzweise basketItemOrderParams).
- *   - Gibt sie als Auftragspositions-Eigenschaften (propertyId + value)
- *     an die entstehende Position weiter.
- *   - Der OrderRenameListener findet diese Werte anschliessend als
- *     "Quelle C (orderProperties Hauptposition)" und baut daraus den
- *     sprechenden Positionsnamen - der bewaehrte Umbenenner bleibt also
- *     unveraendert, bekommt seine Daten aber jetzt zuverlaessig.
+ * WICHTIG (Praezisierung nach externem Review):
+ *   - Es werden AUSSCHLIESSLICH die sechs bekannten Mirka-Eigenschafts-IDs
+ *     aus der PluginConfig uebertragen (64-69), keine beliebigen IDs.
+ *   - Nur wenn ALLE SECHS Werte nicht-leer vorliegen, wird uebergeben und
+ *     als "6/6" geloggt. Sonst wird NICHTS uebergeben und ein sichtbares
+ *     [MIRKA-PROBLEM] geschrieben (kein halbfertiger Erfolg).
  *
  * SICHERHEIT:
- *   - Alles in try/catch: Ein Fehler hier darf den Kauf NIEMALS stoeren.
- *   - Der alte Zettel-/Preis-Weg (BasketItemListener + OrderRenameListener)
- *     bleibt als Rueckfall erhalten. v1.5.13 ist rein ergaenzend.
+ *   - Alles in try/catch: ein Fehler hier darf den Kauf niemals stoeren.
+ *   - Der alte Zettel-/Umbenenn-Weg bleibt als Rueckfall erhalten.
+ *   - Der zusaetzliche AfterBasketToOrderDiagnoseListener protokolliert beim
+ *     ersten Test, wo genau die Werte am OrderItem ankommen (nur lesen).
  */
 class BasketToOrderListener
 {
@@ -53,8 +43,8 @@ class BasketToOrderListener
     const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
 
     /**
-     * Wird vom Event-Dispatcher aufgerufen, UNMITTELBAR bevor ein
-     * Warenkorb-Artikel in eine Auftragsposition umgewandelt wird.
+     * Wird UNMITTELBAR bevor ein Warenkorb-Artikel zur Auftragsposition
+     * wird aufgerufen.
      */
     public function handle(BeforeBasketItemToOrderItem $event)
     {
@@ -72,39 +62,55 @@ class BasketToOrderListener
                 return; // Fremdartikel -> nichts tun, Log bleibt still.
             }
 
-            // ---- Die sechs Werte aus dem Warenkorb-Artikel lesen ----
-            // Bevorzugt originOrderVariationProperties (dieselbe Quelle wie
-            // im BasketItemListener); ersatzweise basketItemOrderParams.
+            // ---- Die sechs erwarteten Eigenschafts-IDs aus der Config ----
+            // Reihenfolge: Qualitaet, Koernung, Verbindung, Breite, Laenge, Mirka-Nr.
+            $erwarteteIds = [
+                'Qualitaet'   => $config->getPropertyIdSchleifmittel(),
+                'Koernung'    => $config->getPropertyIdKoernung(),
+                'Verbindung'  => $config->getPropertyIdVerbindung(),
+                'Breite'      => $config->getPropertyIdBreite(),
+                'Laenge'      => $config->getPropertyIdLaenge(),
+                'MirkaNr'     => $config->getPropertyIdMirkaCode(),
+            ];
+
+            // ---- Alle vorhandenen Eigenschaften des Warenkorb-Artikels lesen ----
             $eigenschaften = $this->leseEigenschaften($basketItem);
 
-            if (!is_array($eigenschaften) || count($eigenschaften) === 0) {
-                // Sichtbare Meldung: erkannt, aber keine Eigenschaften da.
-                $this->getLogger(self::LOG_KENNUNG)->error(
-                    '[MIRKA-PROBLEM] BasketToOrder: keine Bestelleigenschaften '
-                    . 'am Warenkorb-Artikel gefunden | variationId=' . $variationId
-                );
-                return;
-            }
-
-            // ---- In die Ziel-Struktur bringen: [{propertyId, value}, ...] ----
-            // Diese Struktur entspricht genau dem, was der OrderRenameListener
-            // als "orderProperties" der Hauptposition liest (propertyId/value).
-            $zuUebergeben = [];
-            foreach ($eigenschaften as $prop) {
-                $propertyId = (int) $this->getPropertyId($prop);
-                $wert       = (string) $this->getValue($prop);
-                if ($propertyId > 0) {
-                    $zuUebergeben[] = [
-                        'propertyId' => $propertyId,
-                        'value'      => $wert,
-                    ];
+            // In eine schnelle Map propertyId => Wert bringen.
+            $vorhanden = [];
+            if (is_array($eigenschaften)) {
+                foreach ($eigenschaften as $prop) {
+                    $pid = (int) $this->getPropertyId($prop);
+                    $val = trim((string) $this->getValue($prop));
+                    if ($pid > 0) {
+                        $vorhanden[$pid] = $val;
+                    }
                 }
             }
 
-            if (count($zuUebergeben) === 0) {
+            // ---- Nur die sechs bekannten IDs uebernehmen + Vollstaendigkeit pruefen ----
+            $zuUebergeben = [];
+            $fehlende     = [];
+            foreach ($erwarteteIds as $label => $pid) {
+                $pid = (int) $pid;
+                $wert = isset($vorhanden[$pid]) ? $vorhanden[$pid] : '';
+                if ($pid > 0 && $wert !== '') {
+                    $zuUebergeben[] = [
+                        'propertyId' => $pid,
+                        'value'      => $wert,
+                    ];
+                } else {
+                    $fehlende[] = $label;
+                }
+            }
+
+            // ---- Nur bei 6/6 uebergeben ----
+            if (count($fehlende) > 0) {
                 $this->getLogger(self::LOG_KENNUNG)->error(
-                    '[MIRKA-PROBLEM] BasketToOrder: Eigenschaften vorhanden, '
-                    . 'aber keine gueltige propertyId lesbar | variationId=' . $variationId
+                    '[MIRKA-PROBLEM] BasketToOrder: nur '
+                    . (6 - count($fehlende)) . '/6 Mirka-Werte am Warenkorb-Artikel '
+                    . '(variationId=' . $variationId . '), fehlt: '
+                    . implode(',', $fehlende) . ' | Es wurde NICHTS uebergeben.'
                 );
                 return;
             }
@@ -112,22 +118,16 @@ class BasketToOrderListener
             // ---- An die entstehende Auftragsposition mitgeben ----
             $event->addAdditionalVariationProperties($zuUebergeben);
 
-            // Kurze Erfolgsmeldung (im Log unter MIRKA-KURZ auffindbar).
             $this->getLogger(self::LOG_KENNUNG)->error(
-                '[MIRKA-KURZ] BASKET->ORDER'
+                '[MIRKA-KURZ] BASKET->ORDER 6/6'
                 . ' | variationId=' . $variationId
-                . ' | Eigenschaften uebergeben=' . count($zuUebergeben)
+                . ' | uebergeben=' . count($zuUebergeben)
             );
 
         } catch (\Throwable $t) {
-            // Darf den Kauf niemals stoeren.
             $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-PROBLEM] BasketToOrderListener Exception: ' . $t->getMessage(),
-                [
-                    'message' => $t->getMessage(),
-                    'file'    => $t->getFile(),
-                    'line'    => $t->getLine(),
-                ]
+                ['message' => $t->getMessage(), 'file' => $t->getFile(), 'line' => $t->getLine()]
             );
         }
     }
@@ -135,8 +135,7 @@ class BasketToOrderListener
     /**
      * Liest die Eigenschaftsliste aus dem Warenkorb-Artikel.
      * Erst originOrderVariationProperties (wie im BasketItemListener),
-     * dann basketItemOrderParams als Ersatz. Gibt [] zurueck, wenn nichts
-     * lesbar ist.
+     * dann basketItemOrderParams als Ersatz.
      *
      * @param mixed $basketItem
      * @return array
@@ -155,13 +154,8 @@ class BasketToOrderListener
     }
 
     /**
-     * Liest ein benanntes Feld aus einem Objekt ODER Array.
-     * Fest ausgeschriebene Zugriffe (keine dynamischen Property-Namen und
-     * keine verbotenen Funktionen - Plenty-Sandbox-konform).
-     *
-     * @param mixed  $quelle
-     * @param string $name
-     * @return mixed|null
+     * Liest ein benanntes Feld aus einem Objekt ODER Array
+     * (Plenty-Sandbox-konform, keine dynamischen Funktionen).
      */
     private function leseFeld($quelle, $name)
     {
@@ -174,9 +168,7 @@ class BasketToOrderListener
         return null;
     }
 
-    /**
-     * Liest die propertyId eines Eintrags (Objekt oder Array).
-     */
+    /** Liest die propertyId eines Eintrags (Objekt oder Array). */
     private function getPropertyId($prop)
     {
         if (is_object($prop)) {
@@ -188,9 +180,7 @@ class BasketToOrderListener
         return '';
     }
 
-    /**
-     * Liest den Wert eines Eintrags (Objekt oder Array).
-     */
+    /** Liest den Wert eines Eintrags (Objekt oder Array). */
     private function getValue($prop)
     {
         if (is_object($prop)) {
