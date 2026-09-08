@@ -9,7 +9,7 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.5.15)
+ * OrderRenameListener (v1.5.16)
  *
  * ---------------------------------------------------------------------
  * KORREKTUR v1.5.15 (08.09.2026) - RUECKFALL WIEDERHERGESTELLT
@@ -32,6 +32,12 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *       werden koennen (die Luecke aus v1.5.13).
  *     - Die Eindeutigkeitsregeln aus v1.5.12 gelten unveraendert:
  *       Zuordnung nur, wenn der Preis auf BEIDEN Seiten eindeutig ist.
+ *     - NEU v1.5.16: KEINE MISCHUNG. Der Zettel fuellt nur auf, wenn die
+ *       Position ueber den direkten Weg GAR KEINEN Wert hat (0 von 6).
+ *       Bei 1-5 direkten Werten wird nichts ergaenzt, sondern gemeldet.
+ *       Grund: Sonst koennte ein fremder, preisgleicher Zettel die leeren
+ *       Felder fuellen und es entstuende ein Misch-Band aus zwei
+ *       Konfigurationen, das anschliessend als saubere 6/6 durchgeht.
  *   Bekannte Grenze, ausdruecklich dokumentiert: Der Preis bleibt KEIN
  *   Identitaetsbeweis, und bei Sitzungswechsel (Login/Logout) ist der
  *   Zettel weg. Der Rueckfall ist eine Notversorgung, kein Beweis.
@@ -982,9 +988,19 @@ class OrderRenameListener
                 $position = $hauptPositionen[$hauptId];
                 $posPreis = $this->leseBruttoEinzelpreis($position);
 
-                // Hat die Position ueber den direkten Weg schon alles?
+                // Wie viele Werte hat die Position ueber den direkten Weg
+                // schon? 0 = leer, 6 = vollstaendig, 1-5 = Teilwerte.
                 $wVorhanden = isset($werte[$hauptId]) ? $werte[$hauptId] : [];
-                $schonVollstaendig = $this->hatAlleSechsWerte($config, $wVorhanden);
+                $anzahlDirekt      = $this->zaehleDirekteWerte($config, $wVorhanden);
+                $schonVollstaendig = ($anzahlDirekt >= 6);
+                // NEU v1.5.16 (BLOCKER-FIX): Bei 1-5 direkten Werten wird der
+                // Zettel NICHT zum Auffuellen benutzt. Sonst koennte ein
+                // fremder, preisgleicher Zettel die leeren Felder ergaenzen
+                // und es entstuende eine MISCHKONFIGURATION aus zwei
+                // verschiedenen Baendern, die anschliessend als saubere 6/6
+                // durchgeht (Guard meldet "OK"). Lieber sichtbar
+                // unvollstaendig als unsichtbar gemischt.
+                $nurVerbrauchen = ($anzahlDirekt > 0);
 
                 $gewaehlterIndex = -1;
 
@@ -994,7 +1010,7 @@ class OrderRenameListener
                     $anzahlPositionenMitPreis = isset($preisAnzahlPositionen[$preisSchluessel])
                         ? $preisAnzahlPositionen[$preisSchluessel] : 0;
                     if ($anzahlPositionenMitPreis > 1) {
-                        if (!$schonVollstaendig) {
+                        if (!$nurVerbrauchen) {
                             $this->wichtig('[MIRKA-PROBLEM] Zettel-Zuordnung mehrdeutig'
                                 . ' | Hauptposition=' . (int) $hauptId
                                 . ' | Positionspreis=' . $posPreis
@@ -1030,7 +1046,7 @@ class OrderRenameListener
                     if (count($treffer) === 1) {
                         $gewaehlterIndex = $treffer[0];
                     } elseif (count($treffer) > 1) {
-                        if (!$schonVollstaendig) {
+                        if (!$nurVerbrauchen) {
                             $this->wichtig('[MIRKA-PROBLEM] Zettel-Zuordnung mehrdeutig'
                                 . ' | Hauptposition=' . (int) $hauptId
                                 . ' | Positionspreis=' . $posPreis
@@ -1042,7 +1058,7 @@ class OrderRenameListener
                     }
 
                     if ($gewaehlterIndex < 0) {
-                        if (!$schonVollstaendig) {
+                        if (!$nurVerbrauchen) {
                             $this->wichtig('[MIRKA-PROBLEM] Kein Zettel passt zum '
                                 . 'Positionspreis ' . $posPreis . ' (Haupt ' . (int) $hauptId
                                 . ') - Position wird uebersprungen (fail-safe).');
@@ -1056,7 +1072,7 @@ class OrderRenameListener
                         $this->diag('[DIAG][Rename] Positionspreis nicht lesbar - '
                             . 'eindeutiger Fall (1 Position, 1 Zettel), Zettel wird verwendet.');
                     } else {
-                        if (!$schonVollstaendig) {
+                        if (!$nurVerbrauchen) {
                             $this->wichtig('[MIRKA-PROBLEM] Positionspreis nicht lesbar und '
                                 . 'Lage mehrdeutig (' . count($hauptIds) . ' Position(en), '
                                 . count($liste) . ' Zettel) - uebersprungen (fail-safe).');
@@ -1073,6 +1089,19 @@ class OrderRenameListener
                     $this->diag('[DIAG][Rename] Haupt ' . (int) $hauptId
                         . ' hat bereits 6/6 direkte Werte - Zettel wird nur '
                         . 'verbraucht, NICHT uebernommen.');
+                    continue;
+                }
+
+                if ($anzahlDirekt > 0) {
+                    // 1-5 direkte Werte: NICHT mischen.
+                    $this->wichtig('[MIRKA-PROBLEM] Haupt ' . (int) $hauptId
+                        . ' hat ' . $anzahlDirekt . '/6 direkte Werte vom '
+                        . 'Warenkorb-Artikel. Der Sitzungs-Zettel wird NICHT '
+                        . 'zum Auffuellen benutzt (er wird nur verbraucht), weil '
+                        . 'sonst eine MISCHKONFIGURATION aus zwei verschiedenen '
+                        . 'Baendern entstehen koennte, die faelschlich als 6/6 '
+                        . 'durchgeht. Die Position bleibt unvollstaendig und '
+                        . 'wird gemeldet - bitte von Hand pruefen.');
                     continue;
                 }
 
@@ -1154,6 +1183,39 @@ class OrderRenameListener
             // nicht lesbar
         }
         return null;
+    }
+
+    /**
+     * NEU v1.5.16: Zaehlt, wie viele der sechs Mirka-Eigenschaften fuer
+     * eine Position bereits einen nicht-leeren Wert haben.
+     * Wird gebraucht, um die MISCHUNG von Teilwerten mit einem fremden
+     * Sitzungs-Zettel zu verhindern (siehe uebernehmeZettelWerteRueckfall).
+     *
+     * @param PluginConfig $config
+     * @param array        $w  eigenschaftsId => Wert (einer Position)
+     * @return int  0 bis 6
+     */
+    private function zaehleDirekteWerte($config, $w)
+    {
+        if (!is_array($w)) {
+            return 0;
+        }
+        $ids = [
+            $config->getPropertyIdSchleifmittel(),
+            $config->getPropertyIdKoernung(),
+            $config->getPropertyIdVerbindung(),
+            $config->getPropertyIdBreite(),
+            $config->getPropertyIdLaenge(),
+            $config->getPropertyIdMirkaCode(),
+        ];
+        $n = 0;
+        foreach ($ids as $id) {
+            $id = (int) $id;
+            if ($id > 0 && isset($w[$id]) && trim((string) $w[$id]) !== '') {
+                $n++;
+            }
+        }
+        return $n;
     }
 
     private function hatAlleSechsWerte($config, $w)
