@@ -3,13 +3,33 @@
 namespace MirkaBeltCalculator\Listeners;
 
 use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
+use Plenty\Modules\Basket\Contracts\BasketItemRepositoryContract;
 use Plenty\Modules\Frontend\Session\Storage\Contracts\FrontendSessionStorageFactoryContract;
 use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.3.0)
+ * BasketItemListener (v1.5.18)
+ *
+ * ---------------------------------------------------------------------
+ * NEU v1.5.18: DAUERHAFTE SPEICHERUNG AM WARENKORBARTIKEL
+ * ---------------------------------------------------------------------
+ *   Bisher wurden die sechs Kundenwerte nur als "Zettel" in der
+ *   Kunden-SITZUNG abgelegt. Auftrag 329694 (08.09.2026) hat bewiesen,
+ *   dass diese Ablage unzuverlaessig ist: Der Zettel wurde um 13:42:16
+ *   geschrieben und war um 13:42:52 beim Anlegen des Auftrags nicht mehr
+ *   lesbar - bei einem ANGEMELDETEN Kunden, ohne Ab- oder Anmelden.
+ *
+ *   Deshalb schreibt der Listener die sechs Werte jetzt zusaetzlich in die
+ *   basketItemOrderParams des Warenkorbartikels (Methode
+ *   persistiereAmWarenkorbArtikel) und PRUEFT durch erneutes Laden, ob sie
+ *   dort wirklich angekommen sind. Erfolg wird nur gemeldet, wenn der
+ *   Reload 6/6 zeigt und Menge und Preis unveraendert sind.
+ *
+ *   Der Sitzungs-Zettel bleibt vorerst zusaetzlich bestehen (schadet
+ *   nicht) und wird entfernt, sobald die Persistenz im Betrieb traegt.
+ * ---------------------------------------------------------------------
  *
  * NEU v1.3.0 - "ZETTEL FUER DEN UMBENENNER" (06.07.2026):
  *    Der Roentgen-Test (Auftrag 327788) hat bewiesen, dass Plenty die
@@ -256,6 +276,22 @@ class BasketItemListener
                 );
             }
 
+            // NEU v1.5.18: DIE EIGENTLICHE PERSISTENZ.
+            // Die sechs Werte dauerhaft AM WARENKORBARTIKEL speichern
+            // (basketItemOrderParams) statt nur in der Sitzung. Belegt
+            // durch Auftrag 329694: Die Sitzung ist beim Anlegen des
+            // Auftrags auch ohne Login-Wechsel nicht mehr verfuegbar.
+            // Eigenes try/catch: darf den Kauf niemals stoeren.
+            try {
+                $this->persistiereAmWarenkorbArtikel($basketItem, $orderProperties, $config);
+            } catch (\Throwable $egal) {
+                $this->getLogger(self::LOG_KENNUNG)->error(
+                    '[MIRKA-PROBLEM] Basket-Persistenz fehlgeschlagen (Ausnahme) | Grund='
+                    . $egal->getMessage(),
+                    ['message' => $egal->getMessage()]
+                );
+            }
+
         } catch (\Throwable $t) {
             $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-PROBLEM] BasketItemListener Exception: ' . $t->getMessage(),
@@ -267,6 +303,320 @@ class BasketItemListener
                 ]
             );
         }
+    }
+
+    /**
+     * NEU v1.5.18 - DAUERHAFTE SPEICHERUNG AM WARENKORBARTIKEL.
+     *
+     * WARUM:
+     *   Auftrag 329694 (08.09.2026) hat bewiesen, dass der Sitzungs-Zettel
+     *   auch bei einem voellig normalen Checkout eines ANGEMELDETEN Kunden
+     *   verschwindet: 13:42:16 geschrieben, 13:42:52 beim Anlegen des
+     *   Auftrags nicht mehr lesbar. Die Sitzung ist also keine verlaessliche
+     *   Ablage. Der Warenkorbartikel dagegen ist ein echter Datensatz mit
+     *   eigener Id - was dort steht, ueberlebt Sitzungswechsel, Login und
+     *   externe Bezahlvorgaenge.
+     *
+     * WAS PASSIERT:
+     *   1. Die sechs Kundenwerte aus originOrderVariationProperties lesen
+     *      (an dieser Stelle liegen sie nachweislich vollstaendig vor).
+     *   2. Vorhandene basketItemOrderParams des Artikels lesen.
+     *      Sind unsere sechs schon vollstaendig da -> NICHTS tun
+     *      (verhindert wiederholtes Schreiben).
+     *   3. FREMDE Parameter unveraendert uebernehmen, nur die sechs
+     *      konfigurierten IDs setzen bzw. ersetzen.
+     *   4. Mit updateBasketItem() speichern.
+     *   5. Denselben Artikel mit findOneById() NEU LADEN und nachzaehlen.
+     *   6. Erfolg wird NUR gemeldet, wenn der Reload wirklich 6/6 zeigt.
+     *      Ausserdem werden Menge und Preis vor/nach verglichen - haben
+     *      sie sich veraendert, ist das ein lautes Problem.
+     *
+     * WAS NICHT PASSIERT:
+     *   Kein Anfassen von Preis oder Menge, kein Loeschen fremder
+     *   Parameter, kein Schreiben, wenn die sechs Werte schon dort stehen.
+     *
+     * @param mixed        $basketItem
+     * @param array        $orderProperties
+     * @param PluginConfig $config
+     */
+    private function persistiereAmWarenkorbArtikel($basketItem, array $orderProperties, PluginConfig $config)
+    {
+        // ---- Die sechs konfigurierten IDs ----
+        $ids = [
+            (int) $config->getPropertyIdSchleifmittel(),
+            (int) $config->getPropertyIdKoernung(),
+            (int) $config->getPropertyIdVerbindung(),
+            (int) $config->getPropertyIdBreite(),
+            (int) $config->getPropertyIdLaenge(),
+            (int) $config->getPropertyIdMirkaCode(),
+        ];
+        $istUnsere = [];
+        foreach ($ids as $id) {
+            if ($id > 0) {
+                $istUnsere[$id] = true;
+            }
+        }
+
+        // ---- Werte aus den Bestelleigenschaften einsammeln ----
+        $werte = [];
+        foreach ($orderProperties as $prop) {
+            $pid = (int) $this->getPropertyId($prop);
+            $val = trim((string) $this->getValue($prop));
+            if ($pid > 0 && $val !== '' && isset($istUnsere[$pid])) {
+                $werte[$pid] = $val;
+            }
+        }
+        if (count($werte) < 6) {
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-PROBLEM] Basket-Persistenz uebersprungen: nur '
+                . count($werte) . '/6 Werte am Warenkorbartikel lesbar.'
+            );
+            return;
+        }
+
+        // ---- Warenkorbartikel-Id ----
+        $basketItemId = (int) $this->feldBasketItemId($basketItem);
+        if ($basketItemId <= 0) {
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-PROBLEM] Basket-Persistenz uebersprungen: keine '
+                . 'basketItemId am Warenkorbartikel lesbar.'
+            );
+            return;
+        }
+
+        /** @var BasketItemRepositoryContract $repo */
+        $repo = pluginApp(BasketItemRepositoryContract::class);
+
+        // ---- Ist-Zustand VOR dem Schreiben ----
+        $vorArtikel = $repo->findOneById($basketItemId);
+        $vorParams  = $this->leseOrderParams($vorArtikel);
+        $vorAnzahl  = $this->zaehleUnsere($vorParams, $istUnsere);
+        $vorMenge   = (string) $this->feldMenge($vorArtikel);
+        $vorPreis   = (string) $this->feldGivenPrice($vorArtikel);
+
+        if ($vorAnzahl >= 6) {
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-KURZ] BASKET-PERSIST | basketItemId=' . $basketItemId
+                . ' | vor=6/6 | nichts zu tun (Werte stehen bereits am Artikel).'
+            );
+            return;
+        }
+
+        // ---- Neue Parameterliste bauen: fremde behalten, unsere setzen ----
+        $neueParams = [];
+        foreach ($vorParams as $param) {
+            $pid = (int) $this->holeAusFeldern($param, 'propertyId');
+            if ($pid > 0 && isset($istUnsere[$pid])) {
+                continue; // unsere werden gleich neu gesetzt
+            }
+            $val = (string) $this->holeAusFeldern($param, 'value');
+            if ($pid > 0) {
+                $neueParams[] = ['propertyId' => $pid, 'value' => $val];
+            }
+        }
+        foreach ($ids as $id) {
+            if ($id > 0 && isset($werte[$id])) {
+                $neueParams[] = ['propertyId' => $id, 'value' => (string) $werte[$id]];
+            }
+        }
+
+        // ---- Schreiben ----
+        $repo->updateBasketItem($basketItemId, ['basketItemOrderParams' => $neueParams]);
+
+        // ---- Kontrolle: NEU LADEN und nachzaehlen ----
+        $nachArtikel = $repo->findOneById($basketItemId);
+        $nachParams  = $this->leseOrderParams($nachArtikel);
+        $nachAnzahl  = $this->zaehleUnsere($nachParams, $istUnsere);
+        $nachMenge   = (string) $this->feldMenge($nachArtikel);
+        $nachPreis   = (string) $this->feldGivenPrice($nachArtikel);
+
+        $mengeGleich = ($vorMenge === $nachMenge);
+        $preisGleich = ($vorPreis === $nachPreis);
+
+        if ($nachAnzahl >= 6 && $mengeGleich && $preisGleich) {
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-KURZ] BASKET-PERSIST | basketItemId=' . $basketItemId
+                . ' | vor=' . $vorAnzahl . '/6'
+                . ' | geschrieben=' . count($neueParams) . ' Parameter'
+                . ' | nachReload=' . $nachAnzahl . '/6'
+                . ' | Menge unveraendert=ja | Preis unveraendert=ja'
+                . ' | ERFOLG'
+            );
+            return;
+        }
+
+        // ---- Fehlschlag: NICHT als Erfolg melden, Struktur zeigen ----
+        $this->getLogger(self::LOG_KENNUNG)->error(
+            '[MIRKA-PROBLEM] Basket-Persistenz fehlgeschlagen'
+            . ' | basketItemId=' . $basketItemId
+            . ' | vor=' . $vorAnzahl . '/6'
+            . ' | geschrieben=' . count($neueParams) . ' Parameter'
+            . ' | nachReload=' . $nachAnzahl . '/6'
+            . ' | Menge unveraendert=' . ($mengeGleich ? 'ja' : 'NEIN (' . $vorMenge . ' -> ' . $nachMenge . ')')
+            . ' | Preis unveraendert=' . ($preisGleich ? 'ja' : 'NEIN (' . $vorPreis . ' -> ' . $nachPreis . ')')
+            . ' | Struktur nachher: ' . $this->paramsKurz($nachParams)
+        );
+    }
+
+    /**
+     * NEU v1.5.18: Liest die basketItemOrderParams eines Artikels als
+     * Liste von Feld-Arrays.
+     *
+     * WICHTIG: Plenty-Modelle geben ihre Inhalte nicht ueber foreach oder
+     * isset($obj->feld) heraus (belegt in Auftrag 329694 - dort erschienen
+     * nur die internen Schalter incrementing/exists/timestamps). Deshalb
+     * wird jeder Eintrag ueber json_encode()/json_decode() in ein normales
+     * Array umgewandelt.
+     *
+     * @param mixed $artikel
+     * @return array Liste von Feld-Arrays
+     */
+    private function leseOrderParams($artikel)
+    {
+        $roh = null;
+        if (is_object($artikel) && isset($artikel->basketItemOrderParams)) {
+            $roh = $artikel->basketItemOrderParams;
+        } elseif (is_array($artikel) && isset($artikel['basketItemOrderParams'])) {
+            $roh = $artikel['basketItemOrderParams'];
+        }
+        if ($roh === null && is_object($artikel)) {
+            // Ueber die Gesamtausgabe des Modells versuchen.
+            $felder = $this->modellAlsFelder($artikel);
+            if (isset($felder['basketItemOrderParams'])) {
+                $roh = $felder['basketItemOrderParams'];
+            }
+        }
+
+        $liste = [];
+        if (is_array($roh)) {
+            $liste = $roh;
+        } elseif (is_object($roh)) {
+            foreach ($roh as $e) {
+                $liste[] = $e;
+            }
+        }
+
+        $aus = [];
+        foreach ($liste as $eintrag) {
+            $felder = is_array($eintrag) ? $eintrag : $this->modellAlsFelder($eintrag);
+            if (count($felder) > 0) {
+                $aus[] = $felder;
+            }
+        }
+        return $aus;
+    }
+
+    /** Wandelt ein Plenty-Modell ueber json_encode in ein Feld-Array. */
+    private function modellAlsFelder($objekt)
+    {
+        if (is_array($objekt)) {
+            return $objekt;
+        }
+        if (!is_object($objekt)) {
+            return [];
+        }
+        $json = @json_encode($objekt);
+        if (is_string($json) && $json !== '' && $json !== 'null') {
+            $arr = @json_decode($json, true);
+            if (is_array($arr)) {
+                return $arr;
+            }
+        }
+        return [];
+    }
+
+    /** Holt ein Feld aus einem bereits umgewandelten Feld-Array. */
+    private function holeAusFeldern($felder, $name)
+    {
+        if (!is_array($felder)) {
+            return '';
+        }
+        if ($name === 'propertyId') {
+            return isset($felder['propertyId']) ? $felder['propertyId'] : '';
+        }
+        if ($name === 'value') {
+            return isset($felder['value']) ? $felder['value'] : '';
+        }
+        return '';
+    }
+
+    /** Zaehlt, wie viele UNSERER sechs IDs in der Parameterliste nicht leer sind. */
+    private function zaehleUnsere($params, $istUnsere)
+    {
+        $gefunden = [];
+        foreach ($params as $felder) {
+            $pid = (int) $this->holeAusFeldern($felder, 'propertyId');
+            $val = trim((string) $this->holeAusFeldern($felder, 'value'));
+            if ($pid > 0 && $val !== '' && isset($istUnsere[$pid])) {
+                $gefunden[$pid] = true;
+            }
+        }
+        return count($gefunden);
+    }
+
+    /** Kurzfassung der Parameterliste fuers Log. */
+    private function paramsKurz($params)
+    {
+        if (count($params) === 0) {
+            return '(leer)';
+        }
+        $teile = [];
+        $i = 0;
+        foreach ($params as $felder) {
+            $namen = [];
+            foreach ($felder as $n => $w) {
+                $namen[] = (string) $n . '=' . (is_scalar($w) ? substr((string) $w, 0, 30) : '(komplex)');
+            }
+            $teile[] = '[' . $i . ']{' . implode('|', $namen) . '}';
+            $i++;
+            if ($i >= 8) {
+                $teile[] = '...';
+                break;
+            }
+        }
+        return implode('', $teile);
+    }
+
+    /** basketItem.id (fest ausgeschrieben, Sandbox-Regel). */
+    private function feldBasketItemId($q)
+    {
+        if (is_object($q) && isset($q->id)) {
+            return $q->id;
+        }
+        if (is_array($q) && isset($q['id'])) {
+            return $q['id'];
+        }
+        $felder = $this->modellAlsFelder($q);
+        return isset($felder['id']) ? $felder['id'] : 0;
+    }
+
+    /** basketItem.quantity. */
+    private function feldMenge($q)
+    {
+        if (is_object($q) && isset($q->quantity)) {
+            return $q->quantity;
+        }
+        if (is_array($q) && isset($q['quantity'])) {
+            return $q['quantity'];
+        }
+        $felder = $this->modellAlsFelder($q);
+        return isset($felder['quantity']) ? $felder['quantity'] : '?';
+    }
+
+    /** basketItem.price bzw. givenPrice. */
+    private function feldGivenPrice($q)
+    {
+        $felder = $this->modellAlsFelder($q);
+        if (isset($felder['price'])) {
+            return $felder['price'];
+        }
+        if (isset($felder['givenPrice'])) {
+            return $felder['givenPrice'];
+        }
+        if (is_object($q) && isset($q->price)) {
+            return $q->price;
+        }
+        return '?';
     }
 
     /**
@@ -326,6 +676,13 @@ class BasketItemListener
             $liste = array_slice($liste, -10);
         }
         $ablage->setValue('mirkaKonfigListe', json_encode($liste));
+
+        // NEU v1.5.17: Zusaetzlich eine einfache Kontrollmarke in dieselbe
+        // Ablage schreiben. Der OrderRenameListener liest sie beim
+        // Auftrag-Anlegen wieder. Ist die Marke dort ebenfalls weg, ist
+        // bewiesen, dass es sich um eine ANDERE Sitzung handelt und nicht
+        // um ein Problem mit dem Zettel selbst.
+        $ablage->setValue('mirkaSitzungsMarke', 'gesetzt-' . time());
 
         $this->diagKontext(
             'MirkaBeltCalculator [DIAG]: Zettel fuer Umbenenner in Sitzung gespeichert.',
