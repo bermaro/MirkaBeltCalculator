@@ -10,7 +10,69 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.5.19)
+ * BasketItemListener (v1.5.23)
+ *
+ * ---------------------------------------------------------------------
+ * v1.5.23 - AUS DEM EIGENEN ARCHIV WIEDERGEFUNDEN
+ * ---------------------------------------------------------------------
+ *   Im Archiv "ALT-Dateien-vor-15-August" liegt plugin-v1.6.1-TEST vom
+ *   13.08.2026. Dort wurde dieselbe Persistenz-Idee schon einmal gebaut -
+ *   aber mit einem entscheidenden Unterschied im Datensatz:
+ *
+ *     v1.6.1 (Archiv):   propertyId, type, name, value
+ *     v1.5.21 (meins):   propertyId, value
+ *
+ *   type und name stammen dabei NICHT aus einer Vermutung, sondern kommen
+ *   unveraendert aus originOrderVariationProperties - also aus Plentys
+ *   eigener Lieferung. Genau die abgespeckte Form endete mit
+ *   "validation error found". Ab v1.5.23 wird wieder der vollstaendige
+ *   Originaldatensatz gesendet.
+ *
+ *   Hinweis: v1.6.1 war damals ausdruecklich EXPERIMENTELL und wurde nie
+ *   im Betrieb bestaetigt ("nicht ungetestet ausrollen"). Der Readback
+ *   bleibt deshalb Pflicht - Erfolg gilt nur bei 6/6 nach erneutem Laden.
+ * ---------------------------------------------------------------------
+ *
+ * ---------------------------------------------------------------------
+ * v1.5.21 - vier Korrekturen nach Gegenpruefung (drei davon echte Fehler)
+ * ---------------------------------------------------------------------
+ *   1) NUR NOCH EIN SCHREIBVERSUCH. v1.5.20 hat drei geratene Datenformen
+ *      nacheinander auf denselben echten Kundenwarenkorb geschrieben.
+ *      Haette die erste etwas veraendert und die Kontrolle waere trotzdem
+ *      durchgefallen, haette die zweite auf einem bereits veraenderten
+ *      Datensatz gearbeitet - ohne Rueckweg. Das ist entfernt.
+ *
+ *   2) DER ECHTE VALIDATOR-FEHLER WIRD PROTOKOLLIERT. Plentys
+ *      ValidationException traegt die eigentlichen Feldfehler in
+ *      getMessageBag(); "validation error found" ist nur die Ueberschrift.
+ *      Bisher wurde nur getMessage() gelesen - deshalb wussten wir nichts.
+ *      Jetzt landen Meldung, Ort, MessageBag UND die gesendeten Daten im
+ *      Log. Damit sagt Plenty selbst, was falsch ist, statt dass wir raten.
+ *
+ *   3) FREMDE PARAMETER BLEIBEN WIRKLICH UNVERAENDERT. Bis v1.5.20 wurden
+ *      sie auf propertyId+value reduziert - type, name und basketItemId
+ *      gingen dabei verloren. Das war ein echter Fehler. Jetzt wird der
+ *      komplette vorhandene Datensatz unveraendert weitergereicht.
+ *
+ *   4) DIE PREIS-KONTROLLE PRUEFT DIE RICHTIGEN FELDER. Bisher wurde
+ *      zuerst "price" verglichen. Der Konfigurator arbeitet aber mit
+ *      useGivenPrice=true und givenPrice - eine Beschaedigung genau dieser
+ *      Felder waere als "Preis unveraendert" durchgegangen. Verglichen
+ *      werden jetzt quantity, price, givenPrice UND useGivenPrice.
+ *
+ *   Entfallen ist ausserdem die geratene Form "type=text, name=<id>".
+ *   Welche Felder der Validator verlangt, entscheidet sein MessageBag -
+ *   nicht eine Vermutung.
+ * ---------------------------------------------------------------------
+ *
+ * v1.5.20: Die Speicherung in v1.5.19 wurde von Plenty mit
+ * "validation error found" abgelehnt. Welche Felder der Validator
+ * VERLANGT, ist nicht dokumentiert. Deshalb werden jetzt drei Datenformen
+ * - ausschliesslich aus den dokumentierten BasketItemParams-Feldern
+ * propertyId/value/basketItemId/type/name - nacheinander versucht.
+ * Ausserdem wird VORHER protokolliert, was am frisch geladenen
+ * Warenkorbartikel ueberhaupt steht. Erfolg gilt weiterhin nur nach
+ * bestandener Kontrolle durch erneutes Laden.
  *
  * v1.5.19 gegenueber v1.5.18 - zwei Korrekturen, beide ohne neue Logik:
  *   1) is_scalar() entfernt. Diese Funktion war die EINZIGE im ganzen
@@ -368,12 +430,25 @@ class BasketItemListener
         }
 
         // ---- Werte aus den Bestelleigenschaften einsammeln ----
-        $werte = [];
+        // v1.5.23 - AUS DEM ARCHIV UEBERNOMMEN (plugin-v1.6.1-TEST, 13.08.2026):
+        // Nicht nur propertyId+value, sondern der VOLLSTAENDIGE Datensatz,
+        // den Plenty selbst geliefert hat - inklusive type und name. Der
+        // Versuch mit der abgespeckten Form endete mit "validation error
+        // found". type und name werden dabei NICHT erfunden, sondern
+        // unveraendert aus originOrderVariationProperties uebernommen.
+        $werte  = [];   // propertyId => Wert (fuer Zaehlung/Vergleich)
+        $params = [];   // propertyId => vollstaendiger Parameter-Datensatz
         foreach ($orderProperties as $prop) {
             $pid = (int) $this->getPropertyId($prop);
             $val = trim((string) $this->getValue($prop));
             if ($pid > 0 && $val !== '' && isset($istUnsere[$pid])) {
-                $werte[$pid] = $val;
+                $werte[$pid]  = $val;
+                $params[$pid] = [
+                    'propertyId' => $pid,
+                    'type'       => (string) $this->getType($prop),
+                    'name'       => (string) $this->getName($prop),
+                    'value'      => $val,
+                ];
             }
         }
         if (count($werte) < 6) {
@@ -401,8 +476,12 @@ class BasketItemListener
         $vorArtikel = $repo->findOneById($basketItemId);
         $vorParams  = $this->leseOrderParams($vorArtikel);
         $vorAnzahl  = $this->zaehleUnsere($vorParams, $istUnsere);
-        $vorMenge   = (string) $this->feldMenge($vorArtikel);
-        $vorPreis   = (string) $this->feldGivenPrice($vorArtikel);
+        // v1.5.21: Der Vergleichs-Zustand umfasst jetzt ALLE vier Felder,
+        // die den Preis dieser Position bestimmen. Vorher wurde nur
+        // "price" verglichen - ein kaputtes givenPrice/useGivenPrice waere
+        // dabei als "Preis unveraendert" durchgegangen. Genau damit
+        // arbeitet der Rechner aber (useGivenPrice=true + givenPrice).
+        $vorZustand = $this->zustandKurz($vorArtikel);
 
         if ($vorAnzahl >= 6) {
             $this->getLogger(self::LOG_KENNUNG)->error(
@@ -412,65 +491,150 @@ class BasketItemListener
             return;
         }
 
-        // ---- Neue Parameterliste bauen: fremde behalten, unsere setzen ----
+        // ---- MESSUNG: was steht ueberhaupt am frisch geladenen Artikel? ----
+        $this->getLogger(self::LOG_KENNUNG)->error(
+            '[MIRKA-STRUKTUR] Warenkorbartikel frisch geladen'
+            . ' | basketItemId=' . $basketItemId
+            . ' | Zustand: ' . $vorZustand
+            . ' | vorhandene basketItemOrderParams=' . count($vorParams)
+            . ' | davon unsere=' . $vorAnzahl . '/6'
+            . ' | Inhalt: ' . $this->paramsKurz($vorParams)
+            . ' | Zu sendende Mirka-Parameter: ' . $this->paramsKurz($params)
+        );
+
+        // ---- Fremde Parameter VOLLSTAENDIG unveraendert uebernehmen ----
+        // v1.5.21 (Fehler-Korrektur): Bis v1.5.20 wurden fremde Parameter
+        // auf propertyId+value reduziert - dabei gingen type, name und
+        // basketItemId verloren. Jetzt wird der komplette vorhandene
+        // Datensatz unveraendert weitergereicht.
         $neueParams = [];
         foreach ($vorParams as $param) {
             $pid = (int) $this->holeAusFeldern($param, 'propertyId');
             if ($pid > 0 && isset($istUnsere[$pid])) {
                 continue; // unsere werden gleich neu gesetzt
             }
-            $val = (string) $this->holeAusFeldern($param, 'value');
-            if ($pid > 0) {
-                $neueParams[] = ['propertyId' => $pid, 'value' => $val];
-            }
+            $neueParams[] = $param;   // unveraendert, mit allen Feldern
         }
+
+        // ---- Unsere sechs Werte anhaengen ----
+        // Mit propertyId, type, name UND value - so wie Plenty sie selbst
+        // geliefert hat (siehe oben). Das ist die Form aus dem archivierten
+        // v1.6.1-TEST; die abgespeckte Form aus v1.5.21 wurde vom Validator
+        // abgelehnt.
         foreach ($ids as $id) {
-            if ($id > 0 && isset($werte[$id])) {
-                $neueParams[] = ['propertyId' => $id, 'value' => (string) $werte[$id]];
+            if ($id > 0 && isset($params[$id])) {
+                $neueParams[] = $params[$id];
             }
         }
 
-        // ---- Schreiben ----
-        // WICHTIG: Der dritte Parameter $fireEvents steht laut Plenty-Doku
-        // standardmaessig auf TRUE. Dann wuerden durch dieses Speichern
-        // erneut Warenkorb-Ereignisse ausgeloest - im schlimmsten Fall
-        // landet man wieder in diesem Listener (Endlosschleife) oder der
-        // Preis wird ein zweites Mal berechnet. Deshalb ausdruecklich FALSE.
-        $repo->updateBasketItem($basketItemId, ['basketItemOrderParams' => $neueParams], false);
+        // ---- EIN kontrollierter Schreibversuch ----
+        // v1.5.21: Bewusst nur EINER. Bis v1.5.20 wurden drei Datenformen
+        // nacheinander auf denselben echten Kundenwarenkorb geschrieben -
+        // haette der erste Versuch etwas veraendert, haette der zweite auf
+        // einem bereits veraenderten Datensatz gearbeitet, ohne Rueckweg.
+        $fehlertext = '';
+        $fehlerBag  = null;
+        $fehlerOrt  = '';
+        try {
+            // Dritter Parameter $fireEvents ausdruecklich FALSE - sonst
+            // wuerden erneut Warenkorb-Ereignisse ausgeloest.
+            $repo->updateBasketItem(
+                $basketItemId,
+                ['basketItemOrderParams' => $neueParams],
+                false
+            );
+        } catch (\Throwable $ausnahme) {
+            $fehlertext = $ausnahme->getMessage();
+            $fehlerOrt  = $ausnahme->getFile() . ':' . $ausnahme->getLine();
+            // Plentys ValidationException traegt die EIGENTLICHEN
+            // Feldfehler in getMessageBag(). "validation error found" allein
+            // ist nur die Ueberschrift. Ob die Methode existiert, wird nicht
+            // mit method_exists geprueft (im Plugin bisher nie benutzt),
+            // sondern durch einen eigenen Versuch.
+            try {
+                $fehlerBag = $ausnahme->getMessageBag();
+            } catch (\Throwable $egal) {
+                $fehlerBag = null;
+            }
+        }
+
+        if ($fehlertext !== '') {
+            $bagText = '(keiner)';
+            if ($fehlerBag !== null) {
+                $roh = @json_encode($fehlerBag);
+                if (is_string($roh) && $roh !== '') {
+                    $bagText = strlen($roh) > 900 ? substr($roh, 0, 900) . '..' : $roh;
+                }
+            }
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-PROBLEM] Basket-Persistenz abgelehnt'
+                . ' | basketItemId=' . $basketItemId
+                . ' | Meldung=' . $fehlertext
+                . ' | Ort=' . $fehlerOrt
+                . ' | Validator-Details=' . $bagText
+                . ' | Es wurde NICHTS veraendert. Der Sitzungs-Zettel bleibt'
+                . ' vorerst der einzige Weg.',
+                [
+                    'basketItemId'   => $basketItemId,
+                    'meldung'        => $fehlertext,
+                    'messageBag'     => $fehlerBag,
+                    'gesendeteDaten' => $neueParams,
+                ]
+            );
+            return;
+        }
 
         // ---- Kontrolle: NEU LADEN und nachzaehlen ----
         $nachArtikel = $repo->findOneById($basketItemId);
         $nachParams  = $this->leseOrderParams($nachArtikel);
         $nachAnzahl  = $this->zaehleUnsere($nachParams, $istUnsere);
-        $nachMenge   = (string) $this->feldMenge($nachArtikel);
-        $nachPreis   = (string) $this->feldGivenPrice($nachArtikel);
+        $nachZustand = $this->zustandKurz($nachArtikel);
+        $zustandGleich = ($vorZustand === $nachZustand);
 
-        $mengeGleich = ($vorMenge === $nachMenge);
-        $preisGleich = ($vorPreis === $nachPreis);
-
-        if ($nachAnzahl >= 6 && $mengeGleich && $preisGleich) {
+        if ($nachAnzahl >= 6 && $zustandGleich) {
             $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-KURZ] BASKET-PERSIST | basketItemId=' . $basketItemId
                 . ' | vor=' . $vorAnzahl . '/6'
-                . ' | geschrieben=' . count($neueParams) . ' Parameter'
                 . ' | nachReload=' . $nachAnzahl . '/6'
-                . ' | Menge unveraendert=ja | Preis unveraendert=ja'
+                . ' | Menge/Preise unveraendert=ja'
                 . ' | ERFOLG'
             );
             return;
         }
 
-        // ---- Fehlschlag: NICHT als Erfolg melden, Struktur zeigen ----
         $this->getLogger(self::LOG_KENNUNG)->error(
-            '[MIRKA-PROBLEM] Basket-Persistenz fehlgeschlagen'
+            '[MIRKA-PROBLEM] Basket-Persistenz ohne Fehlermeldung gespeichert,'
+            . ' aber Kontrolle NICHT bestanden'
             . ' | basketItemId=' . $basketItemId
-            . ' | vor=' . $vorAnzahl . '/6'
-            . ' | geschrieben=' . count($neueParams) . ' Parameter'
             . ' | nachReload=' . $nachAnzahl . '/6'
-            . ' | Menge unveraendert=' . ($mengeGleich ? 'ja' : 'NEIN (' . $vorMenge . ' -> ' . $nachMenge . ')')
-            . ' | Preis unveraendert=' . ($preisGleich ? 'ja' : 'NEIN (' . $vorPreis . ' -> ' . $nachPreis . ')')
-            . ' | Struktur nachher: ' . $this->paramsKurz($nachParams)
+            . ' | Zustand vorher: ' . $vorZustand
+            . ' | Zustand nachher: ' . $nachZustand
+            . ' | Inhalt nachher: ' . $this->paramsKurz($nachParams)
         );
+    }
+
+    /**
+     * NEU v1.5.21: Der vollstaendige Vergleichs-Zustand einer
+     * Warenkorbposition. Enthaelt ALLE Felder, die den Preis dieser
+     * Position bestimmen - nicht nur "price". Der Konfigurator arbeitet
+     * ausdruecklich mit useGivenPrice=true und givenPrice; eine Kontrolle,
+     * die nur "price" vergleicht, wuerde eine Beschaedigung genau dieser
+     * beiden Felder uebersehen.
+     *
+     * @param mixed $artikel
+     * @return string
+     */
+    private function zustandKurz($artikel)
+    {
+        $felder = $this->modellAlsFelder($artikel);
+        $menge  = isset($felder['quantity'])      ? $felder['quantity']      : '?';
+        $preis  = isset($felder['price'])         ? $felder['price']         : '?';
+        $gPreis = isset($felder['givenPrice'])    ? $felder['givenPrice']    : '?';
+        $gFlag  = isset($felder['useGivenPrice']) ? $felder['useGivenPrice'] : '?';
+        return 'quantity=' . $this->wertFuerLog($menge)
+            . '|price=' . $this->wertFuerLog($preis)
+            . '|givenPrice=' . $this->wertFuerLog($gPreis)
+            . '|useGivenPrice=' . $this->wertFuerLog($gFlag);
     }
 
     /**
@@ -625,34 +789,7 @@ class BasketItemListener
         return isset($felder['id']) ? $felder['id'] : 0;
     }
 
-    /** basketItem.quantity. */
-    private function feldMenge($q)
-    {
-        if (is_object($q) && isset($q->quantity)) {
-            return $q->quantity;
-        }
-        if (is_array($q) && isset($q['quantity'])) {
-            return $q['quantity'];
-        }
-        $felder = $this->modellAlsFelder($q);
-        return isset($felder['quantity']) ? $felder['quantity'] : '?';
-    }
 
-    /** basketItem.price bzw. givenPrice. */
-    private function feldGivenPrice($q)
-    {
-        $felder = $this->modellAlsFelder($q);
-        if (isset($felder['price'])) {
-            return $felder['price'];
-        }
-        if (isset($felder['givenPrice'])) {
-            return $felder['givenPrice'];
-        }
-        if (is_object($q) && isset($q->price)) {
-            return $q->price;
-        }
-        return '?';
-    }
 
     /**
      * NEU v1.3.0: Legt die sechs Kundenwerte als "Zettel" in der
