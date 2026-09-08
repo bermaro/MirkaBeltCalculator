@@ -7,8 +7,6 @@ use Plenty\Plugin\Log\Loggable;
 use Plenty\Plugin\Events\Dispatcher;
 use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
 use Plenty\Modules\Order\Events\OrderCreated;
-use Plenty\Modules\Webshop\Events\BeforeBasketItemToOrderItem;
-use Plenty\Modules\Webshop\Events\AfterBasketItemToOrderItem;
 
 /**
  * MirkaBeltCalculatorServiceProvider (v1.4.7)
@@ -90,38 +88,39 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
             'MirkaBeltCalculator\\Listeners\\OrderPriceGuardListener@handle'
         );
 
-        // 4) NEU v1.5.13: Der EIGENTLICHE Fix fuer den Datenverlust
-        //    Warenkorb -> Auftrag. Am offiziellen Plenty-Uebergang
-        //    BeforeBasketItemToOrderItem werden die sechs Kundenwerte
-        //    DIREKT vom Warenkorb-Artikel an die entstehende Auftrags-
-        //    position mitgegeben (addAdditionalVariationProperties).
-        //    Damit entfaellt die Abhaengigkeit vom Sitzungs-Zettel und vom
-        //    Preisvergleich. BELEGT (Auftrag 329670): Die sechs Werte sind
-        //    im Warenkorb vollstaendig da und am erzeugten Auftrag leer -
-        //    der Verlust passiert beim Uebergang Warenkorb -> Auftrag. Die
-        //    genaue Ursache dieses Verlusts ist NICHT bewiesen.
-        //    v1.5.16: Dieser Listener MISST derzeit nur (Konstante
-        //    UEBERGABE_AKTIV = false) - er schreibt NICHTS an den Auftrag,
-        //    solange nicht belegt ist, in welchem Feld die sechs
-        //    Kundenwerte wirklich stehen.
-        //    v1.5.15: Der Sitzungs-Zettel ist wieder LETZTER RUECKFALL im
-        //    OrderRenameListener - er fuellt nur noch Felder, die dieser
-        //    direkte Weg leer gelassen hat. In v1.5.13/v1.5.14 war er
-        //    ersatzlos abgeschaltet, obwohl der direkte Weg noch 0/6
-        //    lieferte (Auftrag 329681) - dadurch kam gar nichts an.
-        $eventDispatcher->listen(
-            BeforeBasketItemToOrderItem::class,
-            'MirkaBeltCalculator\\Listeners\\BasketToOrderListener@handle'
-        );
-
-        // 5) NEU v1.5.13: REIN LESENDE Diagnose direkt NACH dem Uebergang.
-        //    Protokolliert die Struktur der entstandenen Auftragsposition,
-        //    damit wir beim ersten Test eindeutig sehen, wo die sechs Werte
-        //    ankommen und ob die Datenform stimmt. Aendert nichts; kann nach
-        //    dem Bestaetigen wieder entfernt werden.
-        $eventDispatcher->listen(
-            AfterBasketItemToOrderItem::class,
-            'MirkaBeltCalculator\\Listeners\\AfterBasketToOrderDiagnoseListener@handle'
-        );
+        // -----------------------------------------------------------
+        // 4) + 5) ABGESCHALTET in v1.5.24 (08.09.2026) - WICHTIG
+        // -----------------------------------------------------------
+        //   Die beiden Ereignisse BeforeBasketItemToOrderItem und
+        //   AfterBasketItemToOrderItem sind hier NICHT MEHR registriert.
+        //
+        //   GRUND (belegt im Log vom 08.09.2026, 16:16 Uhr):
+        //     - Die Ereignisse feuerten zwischen 16:16:16 und 16:16:50
+        //       DUTZENDFACH, ohne dass je ein Auftrag entstand. Laut
+        //       Plenty-Doku bieten beide getIncompleteStatus() ("preview
+        //       status for current event") - sie feuern also auch bei der
+        //       Auftrags-VORSCHAU, die der Checkout staendig neu rechnet.
+        //       Genau das hat der Listener nie geprueft.
+        //     - Bei JEDEM dieser Durchlaeufe lief ein Datenbankzugriff
+        //       (findOneById), die JSON-Umwandlung des Warenkorbartikels
+        //       samt sechs Unterzeilen und fuenf Logzeilen. In einer
+        //       halben Minute also hunderte Zugriffe mitten im Checkout.
+        //     - Im selben Zeitraum wechselte die sessionId DREIMAL
+        //       (cMvoU2gI... -> AmlWTMsB... -> enVnF98x...) am selben
+        //       Warenkorb 51503605. Das ist der Logout, den der Kunde sieht.
+        //
+        //   Ob diese Listener den Sitzungswechsel VERURSACHEN oder ihn nur
+        //   verstaerken, ist NICHT bewiesen. Genau deshalb sind sie jetzt
+        //   abgeschaltet: Das ist der einzige saubere Weg, es in einem
+        //   Durchgang zu klaeren, und der Shop laeuft dabei wieder so wie
+        //   vor dem ganzen Umbau (Preis -> Zettel -> Umbenennen).
+        //
+        //   Der Code der beiden Listener bleibt im Plugin liegen. Er wird
+        //   erst wieder registriert, wenn er richtig gebaut ist:
+        //     - getIncompleteStatus() pruefen und bei Vorschau SOFORT
+        //       zurueckkehren,
+        //     - KEIN Datenbankzugriff im Ereignis,
+        //     - hoechstens EINE Logzeile.
+        // -----------------------------------------------------------
     }
 }
