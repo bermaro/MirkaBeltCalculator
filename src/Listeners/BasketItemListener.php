@@ -10,7 +10,27 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.5.23)
+ * BasketItemListener (v1.5.24 - STABIL)
+ *
+ * ---------------------------------------------------------------------
+ * v1.5.24 (08.09.2026): ZURUECK AUF DEN FUNKTIONIERENDEN BETRIEB
+ * ---------------------------------------------------------------------
+ *   Dieser Listener macht wieder genau das, was er in v1.5.2 / v1.5.12
+ *   gemacht hat - und sonst nichts:
+ *       Bestelleigenschaften lesen -> Preis berechnen -> Preis setzen
+ *       -> Sitzungs-Zettel schreiben.
+ *
+ *   ABGESCHALTET: die Basket-Persistenz (updateBasketItem mit
+ *   basketItemOrderParams). Sie wurde von Plenty ohnehin mit
+ *   "validation error found" abgelehnt, hat also nie funktioniert, aber
+ *   bei jedem Zulegen zwei zusaetzliche Datenbankzugriffe verursacht.
+ *   Die Methode persistiereAmWarenkorbArtikel() bleibt im Code liegen,
+ *   wird aber NICHT mehr aufgerufen.
+ *
+ *   Der Sitzungs-Marker mirkaSitzungsMarke wird weiterhin geschrieben -
+ *   er kostet nichts und zeigt beim naechsten Auftrag, ob die Sitzung
+ *   beim Anlegen noch dieselbe ist.
+ * ---------------------------------------------------------------------
  *
  * ---------------------------------------------------------------------
  * v1.5.23 - AUS DEM EIGENEN ARCHIV WIEDERGEFUNDEN
@@ -348,21 +368,22 @@ class BasketItemListener
                 );
             }
 
-            // NEU v1.5.18: DIE EIGENTLICHE PERSISTENZ.
-            // Die sechs Werte dauerhaft AM WARENKORBARTIKEL speichern
-            // (basketItemOrderParams) statt nur in der Sitzung. Belegt
-            // durch Auftrag 329694: Die Sitzung ist beim Anlegen des
-            // Auftrags auch ohne Login-Wechsel nicht mehr verfuegbar.
-            // Eigenes try/catch: darf den Kauf niemals stoeren.
-            try {
-                $this->persistiereAmWarenkorbArtikel($basketItem, $orderProperties, $config);
-            } catch (\Throwable $egal) {
-                $this->getLogger(self::LOG_KENNUNG)->error(
-                    '[MIRKA-PROBLEM] Basket-Persistenz fehlgeschlagen (Ausnahme) | Grund='
-                    . $egal->getMessage(),
-                    ['message' => $egal->getMessage()]
-                );
-            }
+            // ---------------------------------------------------------
+            // ABGESCHALTET in v1.5.24: Basket-Persistenz.
+            // ---------------------------------------------------------
+            //   Der Schreibzugriff in den Warenkorb (updateBasketItem mit
+            //   basketItemOrderParams) wurde von Plenty ohnehin mit
+            //   "validation error found" abgelehnt - er hat also nie
+            //   funktioniert, aber bei jedem Zulegen zwei zusaetzliche
+            //   Datenbankzugriffe verursacht.
+            //   Solange der Checkout nicht wieder stabil laeuft, wird in
+            //   den Warenkorb des Kunden NICHTS geschrieben.
+            //   Der Code der Methode bleibt liegen (siehe unten) und wird
+            //   erst wieder eingeschaltet, wenn der Shop stabil ist und
+            //   der Validator-MessageBag ausgewertet wurde.
+            // if (self::PERSISTENZ_AKTIV) { ... }
+            // ---------------------------------------------------------
+
 
         } catch (\Throwable $t) {
             $this->getLogger(self::LOG_KENNUNG)->error(
