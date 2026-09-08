@@ -241,7 +241,7 @@
             "log": "NUR PROTOKOLLIEREN (neue Namen nur ins Log schreiben, Auftrag unveraendert - zum Testen)",
             "on": "AN (Namen werden in den Auftrag geschrieben)"
         },
-        "default": "log"
+        "default": "on"
     },
     {
         "tab": "8. Fehlerschutz (fail-closed)",
@@ -253,7 +253,7 @@
             "log": "NUR MELDEN (nur lauter Log-Alarm, KEIN Schreibvorgang - Standard, sicher)",
             "on": "AN (zusaetzlich den Auftrag auf die unten gewaehlte Status-ID sperren)"
         },
-        "default": "log"
+        "default": "on"
     },
     {
         "tab": "8. Fehlerschutz (fail-closed)",
@@ -267,6 +267,6 @@
         "key": "failClosedStatusId",
         "label": "Auftrags-Status-ID fuer gesperrte Fehlbestellungen (z.B. 8 fuer Storno oder ein eigener Klaerungs-Status). Nur wirksam im Modus AN. Leer = nur melden, nicht sperren.",
         "type": "text",
-        "default": ""
+        "default": "1"
     }
 ]
