@@ -9,7 +9,24 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.5.22)
+ * OrderRenameListener (v1.5.25)
+ *
+ * ---------------------------------------------------------------------
+ * v1.5.25 (08.09.2026): LOG-STUFEN KORRIGIERT
+ * ---------------------------------------------------------------------
+ *   Die Umbenenn-Logik ist UNVERAENDERT. Geaendert wurde nur, auf welcher
+ *   Stufe geloggt wird:
+ *     - diag()  -> Stufe "info" (Routine/Diagnose), sichtbar ueber den
+ *       Uebersetzungs-Schluessel mirka.diag.
+ *     - Die Auftrags-Sammelzeile [MIRKA-KURZ] AUFTRAG laeuft bei PROBLEM=0
+ *       auf "info" (mirka.auftragOk), bei PROBLEM>0 weiter auf "error"
+ *       mit vollem Klartext.
+ *     - wichtig() (echte Probleme, Guard-Alarme) bleibt auf "error".
+ *   Grund: Plenty zeigt Zeilen ohne Uebersetzung nur ab Stufe "error"
+ *   aufwaerts. Bisher lief deshalb ALLES ueber error() - ein gesundes
+ *   Log sah aus wie ein Fehler-Log. Uebersetzungen liegen in
+ *   resources/lang/de|en/mirka.properties.
+ * ---------------------------------------------------------------------
  *
  * ---------------------------------------------------------------------
  * KORREKTUR v1.5.15 (08.09.2026) - RUECKFALL WIEDERHERGESTELLT
@@ -836,9 +853,20 @@ class OrderRenameListener
                 }
             }
 
-            // Klartext als Nachricht (nicht ueber den Uebersetzungs-
-            // Schluessel), damit der Text direkt in der Log-Liste steht.
-            $this->getLogger(self::LOG_KENNUNG)->error($text);
+            // NEU v1.5.25: Die Stufe richtet sich jetzt nach dem Ergebnis.
+            //   PROBLEM=0 -> Stufe "info" (der gruene Normalfall, kein
+            //     "Error" mehr). Sichtbar durch den Uebersetzungs-Schluessel
+            //     mirka.auftragOk; der Klartext steht in der Zusatzinfo.
+            //   PROBLEM>0 -> Stufe "error" mit vollem Klartext direkt in der
+            //     Nachricht, damit das echte Problem sofort auffaellt.
+            if ($probleme > 0) {
+                $this->getLogger(self::LOG_KENNUNG)->error($text);
+            } else {
+                $this->getLogger(self::LOG_KENNUNG)->info(
+                    'MirkaBeltCalculator::mirka.auftragOk',
+                    ['text' => $text]
+                );
+            }
         } catch (\Throwable $egal) {
             // Sammelzeile ist reine Bequemlichkeit - Fehler ignorieren.
         }
@@ -1379,7 +1407,14 @@ class OrderRenameListener
         if (!$this->debugAn) {
             return; // Routine-Rauschen im Normalbetrieb unterdruecken.
         }
-        $this->getLogger(self::LOG_KENNUNG)->error($text);
+        // NEU v1.5.25: Routine-Diagnose laeuft jetzt auf Stufe "info"
+        // (nicht mehr "error"). Der Uebersetzungs-Schluessel mirka.diag
+        // (resources/lang/de|en/mirka.properties) macht die Info-Zeile
+        // im Backend-Log sichtbar; der Klartext steht in der Zusatzinfo.
+        $this->getLogger(self::LOG_KENNUNG)->info(
+            'MirkaBeltCalculator::mirka.diag',
+            ['text' => $text]
+        );
     }
 
     /**
