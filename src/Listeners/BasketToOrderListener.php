@@ -7,7 +7,7 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * BasketToOrderListener (NEU v1.5.13)
+ * BasketToOrderListener (v1.5.15)
  *
  * ZWECK:
  *   Der eigentliche Fix fuer den Datenverlust Warenkorb -> Auftrag.
@@ -16,11 +16,29 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *   Mirka-Nr.) DIREKT vom Warenkorb-Artikel an die entstehende Auftrags-
  *   position mitgegeben (addAdditionalVariationProperties).
  *
- *   BELEGT ist: Bei Auftrag 329670 waren die sechs Werte im Warenkorb
- *   vollstaendig sichtbar und am erzeugten Auftrag leer - der Verlust
- *   passiert also beim Uebergang Warenkorb -> Auftrag. Die genaue Ursache
- *   dieses Verlusts (z. B. Sitzungswechsel bei externer Bezahlung) ist
- *   damit NICHT bewiesen und wird hier bewusst nicht behauptet.
+ * ---------------------------------------------------------------------
+ * FEHLER-KORREKTUR v1.5.15 (Auftrag 329681, 08.09.2026)  -  WICHTIG
+ * ---------------------------------------------------------------------
+ *   In v1.5.13/v1.5.14 hat dieser Listener IMMER "gefunden=0/6" gemeldet,
+ *   obwohl die Werte da waren. Beleg aus demselben Log, dieselbe Sekunde:
+ *
+ *     [MIRKA-DIAG] VOR  BASKET->ORDER  ... Quellen mit Inhalt=0
+ *     [MIRKA-DIAG] NACH BASKET->ORDER  ... basketItemVariationProperties=6
+ *
+ *   Zwei Meldungen ueber DASSELBE Feld, zwei verschiedene Ergebnisse.
+ *   Der einzige Unterschied: Der Diagnose-Listener zaehlt mit foreach und
+ *   sieht deshalb auch Objekte/Sammlungen; dieser Listener hatte davor
+ *   ein hartes  is_array($q) && count($q) > 0  stehen. Plenty liefert
+ *   basketItemVariationProperties NICHT als einfaches PHP-Array, sondern
+ *   als Objekt/Sammlung  ->  is_array() war false  ->  die Quelle wurde
+ *   verworfen, BEVOR ueberhaupt ein Wert gelesen wurde.
+ *
+ *   Korrektur: Jede Quelle laeuft jetzt durch alsListe(), das Arrays UND
+ *   Objekte/Sammlungen in eine einfache Liste umwandelt. Zusaetzlich wird
+ *   die tatsaechliche Struktur der Eintraege in der SICHTBAREN Logzeile
+ *   ausgegeben (strukturInfo), damit die Datenform beim naechsten Test
+ *   ohne Aufklappen und ohne Raten feststeht.
+ * ---------------------------------------------------------------------
  *
  * QUELLENAUSWAHL:
  *   Es wird NICHT die erste nicht-leere Quelle genommen. Stattdessen werden
@@ -34,6 +52,15 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *   gemeldet - es wird nicht geraten. Nur die sechs in der PluginConfig
  *   hinterlegten IDs werden akzeptiert, und nur bei 6/6 wird uebergeben.
  *
+ * FELDNAMEN DER EINTRAEGE:
+ *   Plenty benennt die Felder je nach Struktur unterschiedlich. Deshalb
+ *   werden fuer die ID nacheinander  propertyId / id / property.id  und
+ *   fuer den Wert  value / propertyValue / propertySelectionValue / name
+ *   geprueft - alles FEST AUSGESCHRIEBEN. Das ist kein Raten: Ein Wert
+ *   wird nur uebernommen, wenn die ermittelte ID EINE DER SECHS
+ *   konfigurierten Eigenschafts-IDs ist. Passt nichts, bleibt es bei 0/6
+ *   und die Struktur steht im Log.
+ *
  * WICHTIG - PLENTY-SANDBOX (Fehler beim Bereitstellen v1.5.13a):
  *   "dynamic property names are not allowed" - ein Zugriff der Form
  *   $objekt->$name ist VERBOTEN. Deshalb sind hier ALLE Feldzugriffe
@@ -41,17 +68,11 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *   bewaehrten BasketItemListener. Bitte nie wieder auf eine generische
  *   leseFeld($obj, $name)-Hilfsfunktion umstellen.
  *
- * STATUS DER DATENFORM:
- *   Plenty dokumentiert das Ereignis und die Methode, aber KEIN Schema fuer
- *   $variationProperties. Die hier verwendete Form
- *   [ ['propertyId' => 64, 'value' => '5C0'], ... ] ist deshalb bis zum
- *   ersten echten Test ausdruecklich UNBEWIESEN (Teststatus).
- *
  * SICHERHEIT:
  *   - Alles in try/catch: ein Fehler hier darf den Kauf niemals stoeren.
  *   - Der Preis wird nicht angefasst.
- *   - Der Session-Zettel wird vom OrderRenameListener seit v1.5.13 NICHT
- *     mehr zur Befuellung benutzt (auch nicht als Rueckfall).
+ *   - Schlaegt dieser direkte Weg fehl, faengt seit v1.5.15 wieder der
+ *     Sitzungs-Zettel im OrderRenameListener auf (reiner Rueckfall).
  */
 class BasketToOrderListener
 {
@@ -97,18 +118,28 @@ class BasketToOrderListener
                 }
             }
 
-            // ---- ALLE Quellen einsammeln (feste Zugriffe, kein $obj->$name) ----
-            $quellenListe = [];
-            $q1 = $this->feldOriginOrderVariationProperties($basketItem);
-            if (is_array($q1) && count($q1) > 0) {
+            // ---- ALLE Quellen einsammeln ----
+            // KORREKTUR v1.5.15: alsListe() statt is_array(). Plenty liefert
+            // diese Felder auch als Objekt/Sammlung; die alte Pruefung hat
+            // solche Quellen stillschweigend verworfen (Auftrag 329681).
+            $quellenListe  = [];
+            $strukturTexte = [];
+
+            $q1 = $this->alsListe($this->feldOriginOrderVariationProperties($basketItem));
+            $strukturTexte[] = 'originOrderVariationProperties[' . $this->strukturInfo($q1) . ']';
+            if (count($q1) > 0) {
                 $quellenListe[] = ['name' => 'originOrderVariationProperties', 'liste' => $q1];
             }
-            $q2 = $this->feldBasketItemOrderParams($basketItem);
-            if (is_array($q2) && count($q2) > 0) {
+
+            $q2 = $this->alsListe($this->feldBasketItemOrderParams($basketItem));
+            $strukturTexte[] = 'basketItemOrderParams[' . $this->strukturInfo($q2) . ']';
+            if (count($q2) > 0) {
                 $quellenListe[] = ['name' => 'basketItemOrderParams', 'liste' => $q2];
             }
-            $q3 = $this->feldBasketItemVariationProperties($basketItem);
-            if (is_array($q3) && count($q3) > 0) {
+
+            $q3 = $this->alsListe($this->feldBasketItemVariationProperties($basketItem));
+            $strukturTexte[] = 'basketItemVariationProperties[' . $this->strukturInfo($q3) . ']';
+            if (count($q3) > 0) {
                 $quellenListe[] = ['name' => 'basketItemVariationProperties', 'liste' => $q3];
             }
 
@@ -158,6 +189,8 @@ class BasketToOrderListener
             }
 
             // ---- DIAGNOSE VOR der Uebergabe (erste Haelfte des Tests) ----
+            // Die Struktur der Quellen steht jetzt MIT in der sichtbaren
+            // Zeile - kein Aufklappen mehr noetig, um die Datenform zu sehen.
             $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-DIAG] VOR BASKET->ORDER'
                 . ' | variationId=' . $variationId
@@ -165,6 +198,7 @@ class BasketToOrderListener
                 . ' | Quellen mit Inhalt=' . count($quellenListe)
                 . ' | Herkunft: ' . implode(' ', $herkunftText)
                 . ' | erwartete IDs=' . implode(',', $erwartet)
+                . ' | STRUKTUR: ' . implode(' ', $strukturTexte)
             );
 
             // ---- Widerspruch zwischen Quellen -> NICHTS uebertragen ----
@@ -185,6 +219,8 @@ class BasketToOrderListener
                     . (6 - count($fehlende)) . '/6 Mirka-Werte am Warenkorb-Artikel '
                     . '(variationId=' . $variationId . '), fehlt: '
                     . implode(',', $fehlende) . ' | Es wurde NICHTS uebergeben.'
+                    . ' | Der Sitzungs-Zettel faengt das im OrderRenameListener auf.'
+                    . ' | STRUKTUR: ' . implode(' ', $strukturTexte)
                 );
                 return;
             }
@@ -204,6 +240,68 @@ class BasketToOrderListener
                 ['message' => $t->getMessage(), 'file' => $t->getFile(), 'line' => $t->getLine()]
             );
         }
+    }
+
+    // ------------------------------------------------------------------
+    //  Listen- und Struktur-Hilfen
+    // ------------------------------------------------------------------
+
+    /**
+     * NEU v1.5.15: Macht aus einer Quelle IMMER eine einfache PHP-Liste.
+     * Arrays werden direkt zurueckgegeben, Objekte/Sammlungen mit foreach
+     * durchlaufen. Genau hier lag der Fehler von v1.5.13/v1.5.14: Dort
+     * stand is_array(), und Plenty liefert diese Felder auch als Objekt -
+     * die Quelle wurde deshalb komplett verworfen.
+     *
+     * @param mixed $q
+     * @return array
+     */
+    private function alsListe($q)
+    {
+        if (is_array($q)) {
+            return $q;
+        }
+        if (is_object($q)) {
+            $aus = [];
+            foreach ($q as $eintrag) {
+                $aus[] = $eintrag;
+            }
+            return $aus;
+        }
+        return [];
+    }
+
+    /**
+     * NEU v1.5.15: Kurze Struktur-Beschreibung einer Quelle fuers Log.
+     * Zeigt Anzahl, Typ des ersten Eintrags und dessen Feldnamen. Damit
+     * ist beim naechsten Test sofort sichtbar, WIE Plenty die Eintraege
+     * benennt - ohne den Zusatzkontext aufklappen zu muessen.
+     *
+     * @param array $liste
+     * @return string
+     */
+    private function strukturInfo($liste)
+    {
+        $n = count($liste);
+        if ($n === 0) {
+            return 'n=0';
+        }
+        $erster = null;
+        foreach ($liste as $eintrag) {
+            $erster = $eintrag;
+            break;
+        }
+        if (is_array($erster)) {
+            return 'n=' . $n . ';Typ=array;Felder=' . implode(',', array_keys($erster));
+        }
+        if (is_object($erster)) {
+            $namen = [];
+            foreach ($erster as $name => $egal) {
+                $namen[] = (string) $name;
+            }
+            return 'n=' . $n . ';Typ=object;Felder=' . implode(',', $namen);
+        }
+        return 'n=' . $n . ';Typ=skalar;Wert=' . substr((string) $erster, 0, 40);
     }
 
     // ------------------------------------------------------------------
@@ -260,26 +358,113 @@ class BasketToOrderListener
         return null;
     }
 
-    /** Liest die propertyId eines Eintrags (Objekt oder Array). */
+    /**
+     * Liest die Eigenschafts-ID eines Eintrags.
+     * Reihenfolge der fest ausgeschriebenen Versuche:
+     *   propertyId  ->  id  ->  property.id
+     * Das ist kein Raten: Der gefundene Wert wird oben nur akzeptiert,
+     * wenn er EINE DER SECHS konfigurierten IDs ist.
+     */
     private function getPropertyId($prop)
     {
         if (is_object($prop)) {
-            return isset($prop->propertyId) ? $prop->propertyId : '';
+            if (isset($prop->propertyId)) {
+                return $prop->propertyId;
+            }
+            if (isset($prop->id)) {
+                return $prop->id;
+            }
+            if (isset($prop->property)) {
+                return $this->getIdAusUnterobjekt($prop->property);
+            }
+            return '';
         }
         if (is_array($prop)) {
-            return isset($prop['propertyId']) ? $prop['propertyId'] : '';
+            if (isset($prop['propertyId'])) {
+                return $prop['propertyId'];
+            }
+            if (isset($prop['id'])) {
+                return $prop['id'];
+            }
+            if (isset($prop['property'])) {
+                return $this->getIdAusUnterobjekt($prop['property']);
+            }
+            return '';
         }
         return '';
     }
 
-    /** Liest den Wert eines Eintrags (Objekt oder Array). */
+    /** Liest die id aus einem verschachtelten property-Objekt/-Array. */
+    private function getIdAusUnterobjekt($p)
+    {
+        if (is_object($p)) {
+            if (isset($p->id)) {
+                return $p->id;
+            }
+            if (isset($p->propertyId)) {
+                return $p->propertyId;
+            }
+            return '';
+        }
+        if (is_array($p)) {
+            if (isset($p['id'])) {
+                return $p['id'];
+            }
+            if (isset($p['propertyId'])) {
+                return $p['propertyId'];
+            }
+            return '';
+        }
+        return '';
+    }
+
+    /**
+     * Liest den Wert eines Eintrags.
+     * Reihenfolge der fest ausgeschriebenen Versuche:
+     *   value  ->  propertyValue  ->  propertySelectionValue  ->  name
+     * Nicht-skalare Inhalte (Arrays/Objekte) werden verworfen, damit nie
+     * ein unbrauchbarer Text in eine Bestelleigenschaft geraet.
+     */
     private function getValue($prop)
     {
         if (is_object($prop)) {
-            return isset($prop->value) ? $prop->value : '';
+            if (isset($prop->value)) {
+                return $this->nurSkalar($prop->value);
+            }
+            if (isset($prop->propertyValue)) {
+                return $this->nurSkalar($prop->propertyValue);
+            }
+            if (isset($prop->propertySelectionValue)) {
+                return $this->nurSkalar($prop->propertySelectionValue);
+            }
+            if (isset($prop->name)) {
+                return $this->nurSkalar($prop->name);
+            }
+            return '';
         }
         if (is_array($prop)) {
-            return isset($prop['value']) ? $prop['value'] : '';
+            if (isset($prop['value'])) {
+                return $this->nurSkalar($prop['value']);
+            }
+            if (isset($prop['propertyValue'])) {
+                return $this->nurSkalar($prop['propertyValue']);
+            }
+            if (isset($prop['propertySelectionValue'])) {
+                return $this->nurSkalar($prop['propertySelectionValue']);
+            }
+            if (isset($prop['name'])) {
+                return $this->nurSkalar($prop['name']);
+            }
+            return '';
+        }
+        return '';
+    }
+
+    /** Laesst nur einfache Werte (Text/Zahl) durch, sonst leer. */
+    private function nurSkalar($w)
+    {
+        if (is_string($w) || is_int($w) || is_float($w)) {
+            return (string) $w;
         }
         return '';
     }
