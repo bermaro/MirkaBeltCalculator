@@ -7,72 +7,62 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * BasketToOrderListener (v1.5.15)
- *
- * ZWECK:
- *   Der eigentliche Fix fuer den Datenverlust Warenkorb -> Auftrag.
- *   Am offiziellen Plenty-Ereignis BeforeBasketItemToOrderItem werden die
- *   sechs Kundenwerte (Qualitaet, Koernung, Verbindung, Breite, Laenge,
- *   Mirka-Nr.) DIREKT vom Warenkorb-Artikel an die entstehende Auftrags-
- *   position mitgegeben (addAdditionalVariationProperties).
+ * BasketToOrderListener (v1.5.16)
  *
  * ---------------------------------------------------------------------
- * FEHLER-KORREKTUR v1.5.15 (Auftrag 329681, 08.09.2026)  -  WICHTIG
+ * ACHTUNG: DIESE VERSION MISST NUR - SIE SCHREIBT NICHTS.
  * ---------------------------------------------------------------------
- *   In v1.5.13/v1.5.14 hat dieser Listener IMMER "gefunden=0/6" gemeldet,
- *   obwohl die Werte da waren. Beleg aus demselben Log, dieselbe Sekunde:
+ *   Die Konstante UEBERGABE_AKTIV steht auf false. Solange sie false ist,
+ *   wird addAdditionalVariationProperties() NICHT aufgerufen. Der Listener
+ *   liest nur, protokolliert die tatsaechliche Datenstruktur und laesst
+ *   den Auftrag voellig unveraendert.
  *
- *     [MIRKA-DIAG] VOR  BASKET->ORDER  ... Quellen mit Inhalt=0
- *     [MIRKA-DIAG] NACH BASKET->ORDER  ... basketItemVariationProperties=6
+ *   WARUM: Es ist NICHT bewiesen, dass in basketItemVariationProperties
+ *   die sechs Kundenwerte stehen. Bewiesen ist nur, dass dieses Feld beim
+ *   Uebergang SECHS EINTRAEGE hat (Auftrag 329681). Was in diesen
+ *   Eintraegen steht, ist unbekannt. Solange das so ist, darf daraus
+ *   nichts an einen echten Auftrag geschrieben werden - sonst koennte im
+ *   schlimmsten Fall eine Beschriftung ("Schleifband Koernung") als
+ *   Kundenwert durchgehen und ein FALSCHES Band als vollstaendig gelten.
  *
- *   Zwei Meldungen ueber DASSELBE Feld, zwei verschiedene Ergebnisse.
- *   Der einzige Unterschied: Der Diagnose-Listener zaehlt mit foreach und
- *   sieht deshalb auch Objekte/Sammlungen; dieser Listener hatte davor
- *   ein hartes  is_array($q) && count($q) > 0  stehen. Plenty liefert
- *   basketItemVariationProperties NICHT als einfaches PHP-Array, sondern
- *   als Objekt/Sammlung  ->  is_array() war false  ->  die Quelle wurde
- *   verworfen, BEVOR ueberhaupt ein Wert gelesen wurde.
+ *   Betrieb in dieser Version: Der Sitzungs-Zettel im OrderRenameListener
+ *   macht die Arbeit wie in v1.5.12. Der Shop laeuft also wie vor v1.5.13.
  *
- *   Korrektur: Jede Quelle laeuft jetzt durch alsListe(), das Arrays UND
- *   Objekte/Sammlungen in eine einfache Liste umwandelt. Zusaetzlich wird
- *   die tatsaechliche Struktur der Eintraege in der SICHTBAREN Logzeile
- *   ausgegeben (strukturInfo), damit die Datenform beim naechsten Test
- *   ohne Aufklappen und ohne Raten feststeht.
+ *   NACH dem Test: Wenn das Log zeigt, in welchem Feld die Kundenwerte
+ *   wirklich stehen, wird GENAU dieses Feld fest eingebaut und
+ *   UEBERGABE_AKTIV auf true gesetzt - nicht vorher.
  * ---------------------------------------------------------------------
  *
- * QUELLENAUSWAHL:
- *   Es wird NICHT die erste nicht-leere Quelle genommen. Stattdessen werden
- *   ALLE bekannten Felder des Warenkorb-Artikels geprueft und die sechs
- *   erwarteten Werte aus nicht-leeren Eintraegen ZUSAMMENGEFUEHRT:
+ * WAS DIESE VERSION IM LOG LIEFERT:
+ *   Fuer jede der drei moeglichen Quellen am Warenkorb-Artikel
  *       originOrderVariationProperties
- *       basketItemOrderParams          (offiziell dokumentiert)
- *       basketItemVariationProperties  (offiziell dokumentiert)
- *   Liefern zwei Quellen fuer dieselbe Eigenschaft UNTERSCHIEDLICHE
- *   nicht-leere Werte, wird NICHTS uebertragen und ein [MIRKA-PROBLEM]
- *   gemeldet - es wird nicht geraten. Nur die sechs in der PluginConfig
- *   hinterlegten IDs werden akzeptiert, und nur bei 6/6 wird uebergeben.
+ *       basketItemOrderParams
+ *       basketItemVariationProperties
+ *   wird ausgegeben: Anzahl der Eintraege, Typ des Eintrags und - fuer
+ *   jeden Eintrag - alle Feldnamen MIT ihren einfachen Werten. Damit
+ *   steht nach EINEM Test fest, wie Plenty diese Eintraege aufbaut.
  *
- * FELDNAMEN DER EINTRAEGE:
- *   Plenty benennt die Felder je nach Struktur unterschiedlich. Deshalb
- *   werden fuer die ID nacheinander  propertyId / id / property.id  und
- *   fuer den Wert  value / propertyValue / propertySelectionValue / name
- *   geprueft - alles FEST AUSGESCHRIEBEN. Das ist kein Raten: Ein Wert
- *   wird nur uebernommen, wenn die ermittelte ID EINE DER SECHS
- *   konfigurierten Eigenschafts-IDs ist. Passt nichts, bleibt es bei 0/6
- *   und die Struktur steht im Log.
+ * NUR DOKUMENTIERTE FELDNAMEN:
+ *   Gelesen wird ausschliesslich  propertyId  und  value  - das ist die
+ *   von Plenty fuer BasketItemParams dokumentierte Form. Frueher
+ *   (v1.5.15) wurden zusaetzlich  id / property.id  bzw.
+ *   propertyValue / propertySelectionValue / name  probiert. Das war
+ *   Raten und ist ENTFERNT. Besonders  name  war gefaehrlich: In diesem
+ *   Projekt hat Plenty an anderer Stelle schon die Beschriftung statt des
+ *   Kundenwerts geliefert - daraus haette ein falsches "6/6" entstehen
+ *   koennen. Findet der Listener mit den dokumentierten Feldern nichts,
+ *   meldet er 0/6 und die Struktur; der Zettel-Rueckfall traegt solange.
  *
  * WICHTIG - PLENTY-SANDBOX (Fehler beim Bereitstellen v1.5.13a):
  *   "dynamic property names are not allowed" - ein Zugriff der Form
  *   $objekt->$name ist VERBOTEN. Deshalb sind hier ALLE Feldzugriffe
- *   FEST AUSGESCHRIEBEN (eigene kleine Methode je Feld), genau wie im
- *   bewaehrten BasketItemListener. Bitte nie wieder auf eine generische
- *   leseFeld($obj, $name)-Hilfsfunktion umstellen.
+ *   FEST AUSGESCHRIEBEN (eigene kleine Methode je Feld). Bitte nie wieder
+ *   auf eine generische leseFeld($obj, $name)-Hilfsfunktion umstellen.
  *
  * SICHERHEIT:
  *   - Alles in try/catch: ein Fehler hier darf den Kauf niemals stoeren.
  *   - Der Preis wird nicht angefasst.
- *   - Schlaegt dieser direkte Weg fehl, faengt seit v1.5.15 wieder der
- *     Sitzungs-Zettel im OrderRenameListener auf (reiner Rueckfall).
+ *   - Solange UEBERGABE_AKTIV false ist, wird nichts geschrieben.
  */
 class BasketToOrderListener
 {
@@ -80,6 +70,19 @@ class BasketToOrderListener
 
     /** Feste Log-Kennung wie in den anderen Listenern. */
     const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
+
+    /**
+     * SCHALTER (v1.5.16): Solange false, wird NICHTS an die entstehende
+     * Auftragsposition uebergeben - der Listener misst nur.
+     *
+     * Auf true darf das erst gesetzt werden, wenn im Log belegt ist, in
+     * welchem Feld die sechs Kundenwerte tatsaechlich stehen, UND der
+     * Lesepfad genau darauf festgelegt wurde. Nicht vorher.
+     */
+    const UEBERGABE_AKTIV = false;
+
+    /** Obergrenze fuer den Strukturtext je Quelle (Log lesbar halten). */
+    const STRUKTUR_MAX = 1200;
 
     /**
      * Wird UNMITTELBAR bevor ein Warenkorb-Artikel zur Auftragsposition
@@ -118,35 +121,30 @@ class BasketToOrderListener
                 }
             }
 
-            // ---- ALLE Quellen einsammeln ----
-            // KORREKTUR v1.5.15: alsListe() statt is_array(). Plenty liefert
-            // diese Felder auch als Objekt/Sammlung; die alte Pruefung hat
-            // solche Quellen stillschweigend verworfen (Auftrag 329681).
-            $quellenListe  = [];
-            $strukturTexte = [];
-
+            // ---- Alle drei Quellen einsammeln ----
+            // alsListe() statt is_array(): Plenty liefert diese Felder auch
+            // als Objekt/Sammlung. Mit is_array() wurden sie in
+            // v1.5.13/v1.5.14 stillschweigend verworfen (Auftrag 329681).
             $q1 = $this->alsListe($this->feldOriginOrderVariationProperties($basketItem));
-            $strukturTexte[] = 'originOrderVariationProperties[' . $this->strukturInfo($q1) . ']';
+            $q2 = $this->alsListe($this->feldBasketItemOrderParams($basketItem));
+            $q3 = $this->alsListe($this->feldBasketItemVariationProperties($basketItem));
+
+            $quellenListe = [];
             if (count($q1) > 0) {
                 $quellenListe[] = ['name' => 'originOrderVariationProperties', 'liste' => $q1];
             }
-
-            $q2 = $this->alsListe($this->feldBasketItemOrderParams($basketItem));
-            $strukturTexte[] = 'basketItemOrderParams[' . $this->strukturInfo($q2) . ']';
             if (count($q2) > 0) {
                 $quellenListe[] = ['name' => 'basketItemOrderParams', 'liste' => $q2];
             }
-
-            $q3 = $this->alsListe($this->feldBasketItemVariationProperties($basketItem));
-            $strukturTexte[] = 'basketItemVariationProperties[' . $this->strukturInfo($q3) . ']';
             if (count($q3) > 0) {
                 $quellenListe[] = ['name' => 'basketItemVariationProperties', 'liste' => $q3];
             }
 
-            // ---- Nicht-leere Werte der sechs IDs zusammenfuehren ----
+            // ---- Werte der sechs IDs zusammenfuehren ----
+            // Gelesen wird NUR propertyId + value (dokumentierte Form).
             $gefunden      = []; // propertyId => Wert
             $herkunft      = []; // propertyId => Quellenname
-            $widersprueche = []; // Klartext-Meldungen
+            $widersprueche = [];
 
             foreach ($quellenListe as $quelle) {
                 $quellenName = $quelle['name'];
@@ -154,7 +152,7 @@ class BasketToOrderListener
                     $pid = (int) $this->getPropertyId($prop);
                     $val = trim((string) $this->getValue($prop));
                     if ($pid <= 0 || $val === '') {
-                        continue; // leere Eintraege ignorieren
+                        continue;
                     }
                     if (!isset($idZuLabel[$pid])) {
                         continue; // fremde Eigenschaft -> nie uebertragen
@@ -163,7 +161,6 @@ class BasketToOrderListener
                         $gefunden[$pid] = $val;
                         $herkunft[$pid] = $quellenName;
                     } elseif ($gefunden[$pid] !== $val) {
-                        // Zwei Quellen, zwei verschiedene Werte -> nicht raten.
                         $widersprueche[] = $idZuLabel[$pid] . ' (ID ' . $pid . '): "'
                             . $gefunden[$pid] . '" aus ' . $herkunft[$pid]
                             . ' vs. "' . $val . '" aus ' . $quellenName;
@@ -171,7 +168,7 @@ class BasketToOrderListener
                 }
             }
 
-            // ---- Fehlende bestimmen + Payload bauen ----
+            // ---- Bilanz aufstellen ----
             $fehlende     = [];
             $zuUebergeben = [];
             $herkunftText = [];
@@ -188,18 +185,46 @@ class BasketToOrderListener
                 }
             }
 
-            // ---- DIAGNOSE VOR der Uebergabe (erste Haelfte des Tests) ----
-            // Die Struktur der Quellen steht jetzt MIT in der sichtbaren
-            // Zeile - kein Aufklappen mehr noetig, um die Datenform zu sehen.
+            // ---- MESSUNG: die tatsaechliche Struktur ins Log ----
+            // Jede Quelle bekommt eine eigene Zeile, damit nichts abgeschnitten
+            // wird und alles direkt in der Nachrichtenspalte steht.
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-STRUKTUR] originOrderVariationProperties | variationId='
+                . $variationId . ' | ' . $this->strukturDetail($q1)
+            );
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-STRUKTUR] basketItemOrderParams | variationId='
+                . $variationId . ' | ' . $this->strukturDetail($q2)
+            );
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-STRUKTUR] basketItemVariationProperties | variationId='
+                . $variationId . ' | ' . $this->strukturDetail($q3)
+            );
+
+            // ---- Bilanz-Zeile ----
             $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-DIAG] VOR BASKET->ORDER'
                 . ' | variationId=' . $variationId
                 . ' | gefunden=' . (6 - count($fehlende)) . '/6'
+                . ' (nur ueber die dokumentierten Felder propertyId+value)'
                 . ' | Quellen mit Inhalt=' . count($quellenListe)
                 . ' | Herkunft: ' . implode(' ', $herkunftText)
                 . ' | erwartete IDs=' . implode(',', $erwartet)
-                . ' | STRUKTUR: ' . implode(' ', $strukturTexte)
+                . ' | Uebergabe=' . (self::UEBERGABE_AKTIV ? 'AKTIV' : 'AUS (nur Messung)')
             );
+
+            // ---- Ab hier wuerde geschrieben - in dieser Version nicht ----
+            if (!self::UEBERGABE_AKTIV) {
+                $this->getLogger(self::LOG_KENNUNG)->error(
+                    '[MIRKA-KURZ] BASKET->ORDER NUR MESSUNG'
+                    . ' | variationId=' . $variationId
+                    . ' | haette uebergeben=' . count($zuUebergeben) . '/6'
+                    . ' | Es wurde NICHTS geschrieben.'
+                    . ' | Die Werte kommen in dieser Version wie frueher aus dem'
+                    . ' Sitzungs-Zettel (OrderRenameListener).'
+                );
+                return;
+            }
 
             // ---- Widerspruch zwischen Quellen -> NICHTS uebertragen ----
             if (count($widersprueche) > 0) {
@@ -219,13 +244,10 @@ class BasketToOrderListener
                     . (6 - count($fehlende)) . '/6 Mirka-Werte am Warenkorb-Artikel '
                     . '(variationId=' . $variationId . '), fehlt: '
                     . implode(',', $fehlende) . ' | Es wurde NICHTS uebergeben.'
-                    . ' | Der Sitzungs-Zettel faengt das im OrderRenameListener auf.'
-                    . ' | STRUKTUR: ' . implode(' ', $strukturTexte)
                 );
                 return;
             }
 
-            // ---- An die entstehende Auftragsposition mitgeben ----
             $event->addAdditionalVariationProperties($zuUebergeben);
 
             $this->getLogger(self::LOG_KENNUNG)->error(
@@ -247,7 +269,7 @@ class BasketToOrderListener
     // ------------------------------------------------------------------
 
     /**
-     * NEU v1.5.15: Macht aus einer Quelle IMMER eine einfache PHP-Liste.
+     * Macht aus einer Quelle IMMER eine einfache PHP-Liste.
      * Arrays werden direkt zurueckgegeben, Objekte/Sammlungen mit foreach
      * durchlaufen. Genau hier lag der Fehler von v1.5.13/v1.5.14: Dort
      * stand is_array(), und Plenty liefert diese Felder auch als Objekt -
@@ -272,36 +294,99 @@ class BasketToOrderListener
     }
 
     /**
-     * NEU v1.5.15: Kurze Struktur-Beschreibung einer Quelle fuers Log.
-     * Zeigt Anzahl, Typ des ersten Eintrags und dessen Feldnamen. Damit
-     * ist beim naechsten Test sofort sichtbar, WIE Plenty die Eintraege
-     * benennt - ohne den Zusatzkontext aufklappen zu muessen.
+     * NEU v1.5.16: Vollstaendige Struktur-Ausgabe einer Quelle.
+     *
+     * Gibt fuer JEDEN Eintrag alle Feldnamen MIT ihren einfachen Werten
+     * aus, z. B.:
+     *   n=6;Typ=object;[0]{propertyId=64|value=5C0};[1]{propertyId=65|value=80}
+     *
+     * Damit ist nach EINEM Test belegt, wie Plenty die Eintraege aufbaut -
+     * und ob dort ueberhaupt Kundenwerte oder nur Beschriftungen stehen.
+     * Verschachtelte Felder werden als (objekt)/(liste) markiert, nicht
+     * ausgeklappt; das haelt die Zeile lesbar.
      *
      * @param array $liste
      * @return string
      */
-    private function strukturInfo($liste)
+    private function strukturDetail($liste)
     {
         $n = count($liste);
         if ($n === 0) {
-            return 'n=0';
+            return 'n=0 (leer oder nicht vorhanden)';
         }
-        $erster = null;
-        foreach ($liste as $eintrag) {
-            $erster = $eintrag;
+
+        $typ = 'unbekannt';
+        foreach ($liste as $erster) {
+            if (is_array($erster)) {
+                $typ = 'array';
+            } elseif (is_object($erster)) {
+                $typ = 'object';
+            } else {
+                $typ = 'skalar';
+            }
             break;
         }
-        if (is_array($erster)) {
-            return 'n=' . $n . ';Typ=array;Felder=' . implode(',', array_keys($erster));
+
+        $text  = 'n=' . $n . ';Typ=' . $typ . ';';
+        $index = 0;
+        foreach ($liste as $eintrag) {
+            $text .= '[' . $index . ']' . $this->eintragDetail($eintrag);
+            $index++;
+            if (strlen($text) > self::STRUKTUR_MAX) {
+                $text .= '...(gekuerzt)';
+                break;
+            }
         }
-        if (is_object($erster)) {
+        return $text;
+    }
+
+    /** Feldnamen + einfache Werte EINES Eintrags als Text. */
+    private function eintragDetail($eintrag)
+    {
+        if (is_array($eintrag)) {
+            $teile = [];
+            foreach ($eintrag as $name => $wert) {
+                $teile[] = (string) $name . '=' . $this->wertKurz($wert);
+            }
+            return '{' . implode('|', $teile) . '}';
+        }
+        if (is_object($eintrag)) {
+            $teile = [];
+            foreach ($eintrag as $name => $wert) {
+                $teile[] = (string) $name . '=' . $this->wertKurz($wert);
+            }
+            return '{' . implode('|', $teile) . '}';
+        }
+        return '{skalar=' . $this->wertKurz($eintrag) . '}';
+    }
+
+    /** Kurzform eines Feldwerts fuers Log. */
+    private function wertKurz($w)
+    {
+        if ($w === null) {
+            return '(null)';
+        }
+        if (is_bool($w)) {
+            return $w ? '(true)' : '(false)';
+        }
+        if (is_string($w) || is_int($w) || is_float($w)) {
+            $t = (string) $w;
+            if (strlen($t) > 60) {
+                $t = substr($t, 0, 60) . '..';
+            }
+            return $t;
+        }
+        if (is_array($w)) {
+            return '(liste:' . count($w) . ')';
+        }
+        if (is_object($w)) {
             $namen = [];
-            foreach ($erster as $name => $egal) {
+            foreach ($w as $name => $egal) {
                 $namen[] = (string) $name;
             }
-            return 'n=' . $n . ';Typ=object;Felder=' . implode(',', $namen);
+            return '(objekt:' . implode(',', $namen) . ')';
         }
-        return 'n=' . $n . ';Typ=skalar;Wert=' . substr((string) $erster, 0, 40);
+        return '(unbekannt)';
     }
 
     // ------------------------------------------------------------------
@@ -359,103 +444,45 @@ class BasketToOrderListener
     }
 
     /**
-     * Liest die Eigenschafts-ID eines Eintrags.
-     * Reihenfolge der fest ausgeschriebenen Versuche:
-     *   propertyId  ->  id  ->  property.id
-     * Das ist kein Raten: Der gefundene Wert wird oben nur akzeptiert,
-     * wenn er EINE DER SECHS konfigurierten IDs ist.
+     * Liest die Eigenschafts-ID eines Eintrags - AUSSCHLIESSLICH aus dem
+     * dokumentierten Feld  propertyId.
+     *
+     * v1.5.16: Die Versuche ueber  id  und  property.id  sind ENTFERNT.
+     * Was  id  in einer unbekannten Struktur bedeutet, ist unbewiesen -
+     * eine Zeilen-ID koennte zufaellig 64-69 sein und damit einen falschen
+     * Wert an die richtige Eigenschaft haengen.
      */
     private function getPropertyId($prop)
     {
         if (is_object($prop)) {
-            if (isset($prop->propertyId)) {
-                return $prop->propertyId;
-            }
-            if (isset($prop->id)) {
-                return $prop->id;
-            }
-            if (isset($prop->property)) {
-                return $this->getIdAusUnterobjekt($prop->property);
-            }
-            return '';
+            return isset($prop->propertyId) ? $prop->propertyId : '';
         }
         if (is_array($prop)) {
-            if (isset($prop['propertyId'])) {
-                return $prop['propertyId'];
-            }
-            if (isset($prop['id'])) {
-                return $prop['id'];
-            }
-            if (isset($prop['property'])) {
-                return $this->getIdAusUnterobjekt($prop['property']);
-            }
-            return '';
-        }
-        return '';
-    }
-
-    /** Liest die id aus einem verschachtelten property-Objekt/-Array. */
-    private function getIdAusUnterobjekt($p)
-    {
-        if (is_object($p)) {
-            if (isset($p->id)) {
-                return $p->id;
-            }
-            if (isset($p->propertyId)) {
-                return $p->propertyId;
-            }
-            return '';
-        }
-        if (is_array($p)) {
-            if (isset($p['id'])) {
-                return $p['id'];
-            }
-            if (isset($p['propertyId'])) {
-                return $p['propertyId'];
-            }
-            return '';
+            return isset($prop['propertyId']) ? $prop['propertyId'] : '';
         }
         return '';
     }
 
     /**
-     * Liest den Wert eines Eintrags.
-     * Reihenfolge der fest ausgeschriebenen Versuche:
-     *   value  ->  propertyValue  ->  propertySelectionValue  ->  name
-     * Nicht-skalare Inhalte (Arrays/Objekte) werden verworfen, damit nie
-     * ein unbrauchbarer Text in eine Bestelleigenschaft geraet.
+     * Liest den Wert eines Eintrags - AUSSCHLIESSLICH aus dem
+     * dokumentierten Feld  value.
+     *
+     * v1.5.16: Die Versuche ueber  propertyValue / propertySelectionValue
+     * und besonders  name  sind ENTFERNT. In diesem Projekt hat Plenty an
+     * anderer Stelle bereits die BESCHRIFTUNG statt des Kundenwerts
+     * geliefert ("Schleifband Koernung"). Waere  name  hier dasselbe,
+     * haette der Listener eine Beschriftung als Kundenwert genommen und
+     * ein falsches Band als vollstaendig gemeldet.
+     *
+     * Nicht-skalare Inhalte werden verworfen.
      */
     private function getValue($prop)
     {
         if (is_object($prop)) {
-            if (isset($prop->value)) {
-                return $this->nurSkalar($prop->value);
-            }
-            if (isset($prop->propertyValue)) {
-                return $this->nurSkalar($prop->propertyValue);
-            }
-            if (isset($prop->propertySelectionValue)) {
-                return $this->nurSkalar($prop->propertySelectionValue);
-            }
-            if (isset($prop->name)) {
-                return $this->nurSkalar($prop->name);
-            }
-            return '';
+            return isset($prop->value) ? $this->nurSkalar($prop->value) : '';
         }
         if (is_array($prop)) {
-            if (isset($prop['value'])) {
-                return $this->nurSkalar($prop['value']);
-            }
-            if (isset($prop['propertyValue'])) {
-                return $this->nurSkalar($prop['propertyValue']);
-            }
-            if (isset($prop['propertySelectionValue'])) {
-                return $this->nurSkalar($prop['propertySelectionValue']);
-            }
-            if (isset($prop['name'])) {
-                return $this->nurSkalar($prop['name']);
-            }
-            return '';
+            return isset($prop['value']) ? $this->nurSkalar($prop['value']) : '';
         }
         return '';
     }
