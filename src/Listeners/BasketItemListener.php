@@ -10,7 +10,17 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.5.18)
+ * BasketItemListener (v1.5.19)
+ *
+ * v1.5.19 gegenueber v1.5.18 - zwei Korrekturen, beide ohne neue Logik:
+ *   1) is_scalar() entfernt. Diese Funktion war die EINZIGE im ganzen
+ *      Plugin, die bisher nie benutzt wurde und damit in der
+ *      Plenty-Sandbox nicht als erlaubt belegt ist. Ersetzt durch
+ *      is_string/is_int/is_float/is_bool - die laufen seit v1.5.16.
+ *   2) updateBasketItem() bekommt den dritten Parameter $fireEvents
+ *      ausdruecklich auf FALSE. Laut Plenty-Doku steht er sonst auf TRUE
+ *      und das Speichern wuerde erneut Warenkorb-Ereignisse ausloesen -
+ *      im schlimmsten Fall landet man wieder in diesem Listener.
  *
  * ---------------------------------------------------------------------
  * NEU v1.5.18: DAUERHAFTE SPEICHERUNG AM WARENKORBARTIKEL
@@ -421,7 +431,12 @@ class BasketItemListener
         }
 
         // ---- Schreiben ----
-        $repo->updateBasketItem($basketItemId, ['basketItemOrderParams' => $neueParams]);
+        // WICHTIG: Der dritte Parameter $fireEvents steht laut Plenty-Doku
+        // standardmaessig auf TRUE. Dann wuerden durch dieses Speichern
+        // erneut Warenkorb-Ereignisse ausgeloest - im schlimmsten Fall
+        // landet man wieder in diesem Listener (Endlosschleife) oder der
+        // Preis wird ein zweites Mal berechnet. Deshalb ausdruecklich FALSE.
+        $repo->updateBasketItem($basketItemId, ['basketItemOrderParams' => $neueParams], false);
 
         // ---- Kontrolle: NEU LADEN und nachzaehlen ----
         $nachArtikel = $repo->findOneById($basketItemId);
@@ -565,7 +580,7 @@ class BasketItemListener
         foreach ($params as $felder) {
             $namen = [];
             foreach ($felder as $n => $w) {
-                $namen[] = (string) $n . '=' . (is_scalar($w) ? substr((string) $w, 0, 30) : '(komplex)');
+                $namen[] = (string) $n . '=' . $this->wertFuerLog($w);
             }
             $teile[] = '[' . $i . ']{' . implode('|', $namen) . '}';
             $i++;
@@ -575,6 +590,26 @@ class BasketItemListener
             }
         }
         return implode('', $teile);
+    }
+
+    /**
+     * Kurzform eines Feldwerts fuers Log.
+     * Bewusst OHNE is_scalar(): Diese Funktion wurde im Plugin bisher nie
+     * benutzt und ist in der Plenty-Sandbox nicht als erlaubt belegt.
+     * is_string/is_int/is_float/is_bool sind seit v1.5.16 im Einsatz.
+     */
+    private function wertFuerLog($w)
+    {
+        if (is_string($w) || is_int($w) || is_float($w)) {
+            return substr((string) $w, 0, 30);
+        }
+        if (is_bool($w)) {
+            return $w ? 'true' : 'false';
+        }
+        if ($w === null) {
+            return 'null';
+        }
+        return '(komplex)';
     }
 
     /** basketItem.id (fest ausgeschrieben, Sandbox-Regel). */
