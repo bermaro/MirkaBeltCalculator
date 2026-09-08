@@ -100,6 +100,10 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
         //    im Warenkorb vollstaendig da und am erzeugten Auftrag leer -
         //    der Verlust passiert beim Uebergang Warenkorb -> Auftrag. Die
         //    genaue Ursache dieses Verlusts ist NICHT bewiesen.
+        //    v1.5.16: Dieser Listener MISST derzeit nur (Konstante
+        //    UEBERGABE_AKTIV = false) - er schreibt NICHTS an den Auftrag,
+        //    solange nicht belegt ist, in welchem Feld die sechs
+        //    Kundenwerte wirklich stehen.
         //    v1.5.15: Der Sitzungs-Zettel ist wieder LETZTER RUECKFALL im
         //    OrderRenameListener - er fuellt nur noch Felder, die dieser
         //    direkte Weg leer gelassen hat. In v1.5.13/v1.5.14 war er
