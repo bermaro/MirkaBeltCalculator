@@ -96,9 +96,12 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
         //    DIREKT vom Warenkorb-Artikel an die entstehende Auftrags-
         //    position mitgegeben (addAdditionalVariationProperties).
         //    Damit entfaellt die Abhaengigkeit vom Sitzungs-Zettel und vom
-        //    Preisvergleich (Ursache der leeren Positionen bei externer
-        //    Bezahlung und bei gleich teuren Baendern, Auftrag 329670).
-        //    Der Zettel-/Umbenenn-Weg bleibt als Rueckfall bestehen.
+        //    Preisvergleich. BELEGT (Auftrag 329670): Die sechs Werte sind
+        //    im Warenkorb vollstaendig da und am erzeugten Auftrag leer -
+        //    der Verlust passiert beim Uebergang Warenkorb -> Auftrag. Die
+        //    genaue Ursache dieses Verlusts ist NICHT bewiesen.
+        //    ACHTUNG: Der Session-Zettel ist seit v1.5.13 KEIN Rueckfall
+        //    mehr - der OrderRenameListener uebernimmt daraus nichts.
         $eventDispatcher->listen(
             BeforeBasketItemToOrderItem::class,
             'MirkaBeltCalculator\\Listeners\\BasketToOrderListener@handle'
