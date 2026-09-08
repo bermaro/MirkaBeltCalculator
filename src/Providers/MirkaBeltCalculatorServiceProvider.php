@@ -8,6 +8,7 @@ use Plenty\Plugin\Events\Dispatcher;
 use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
 use Plenty\Modules\Order\Events\OrderCreated;
 use Plenty\Modules\Webshop\Events\BeforeBasketItemToOrderItem;
+use Plenty\Modules\Webshop\Events\AfterBasketItemToOrderItem;
 
 /**
  * MirkaBeltCalculatorServiceProvider (v1.4.7)
@@ -101,6 +102,16 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
         $eventDispatcher->listen(
             BeforeBasketItemToOrderItem::class,
             'MirkaBeltCalculator\\Listeners\\BasketToOrderListener@handle'
+        );
+
+        // 5) NEU v1.5.13: REIN LESENDE Diagnose direkt NACH dem Uebergang.
+        //    Protokolliert die Struktur der entstandenen Auftragsposition,
+        //    damit wir beim ersten Test eindeutig sehen, wo die sechs Werte
+        //    ankommen und ob die Datenform stimmt. Aendert nichts; kann nach
+        //    dem Bestaetigen wieder entfernt werden.
+        $eventDispatcher->listen(
+            AfterBasketItemToOrderItem::class,
+            'MirkaBeltCalculator\\Listeners\\AfterBasketToOrderDiagnoseListener@handle'
         );
     }
 }
