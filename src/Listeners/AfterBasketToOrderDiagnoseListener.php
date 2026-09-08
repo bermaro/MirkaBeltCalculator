@@ -24,10 +24,20 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *     - Wurde die Payload angenommen, kommt aber woanders an?
  *     - Kam sie korrekt an, liest der Umbenenner nur die falsche Stelle?
  *
- * WICHTIG:
+ * WICHTIG - PLENTY-SANDBOX (Fehler beim Bereitstellen v1.5.13a):
+ *   Plenty verbietet DYNAMISCHE PROPERTY-NAMEN. Ein Zugriff der Form
+ *   $objekt->$name  (Feldname steht in einer Variablen) fuehrt beim
+ *   Bereitstellen zum Abbruch:
+ *     "dynamic property names are not allowed"
+ *   Deshalb gibt es hier KEINE allgemeine Hilfsfunktion leseFeld($obj, $name)
+ *   mehr, sondern fuer JEDES Feld eine eigene, fest ausgeschriebene
+ *   Lesefunktion (feldBasketItemId(), feldOrderItemProperties(), ...).
+ *   Bitte nie wieder auf eine generische Hilfsfunktion umstellen.
+ *
+ * WICHTIG (Log-Form):
  *   Es wird NICHT ein grosser JSON-Block nach fester Laenge abgeschnitten
  *   (dabei koennten genau die relevanten Felder wegfallen). Stattdessen wird
- *   JEDES relevante Feld EINZELN ausgegeben.
+ *   JEDES relevante Feld EINZELN ausgegeben und EINZELN begrenzt.
  *
  * SICHERHEIT:
  *   - Kein Schreibzugriff. Alles in try/catch. Kann den Kauf nicht stoeren.
@@ -50,9 +60,9 @@ class AfterBasketToOrderDiagnoseListener
             $orderItem  = $event->getOrderItem();
 
             // Variation bestimmen (kann Objekt oder Array sein).
-            $variationId = (int) $this->leseFeld($basketItem, 'variationId');
+            $variationId = (int) $this->feldBasketItemVariationId($basketItem);
             if ($variationId === 0) {
-                $variationId = (int) $this->leseFeld($orderItem, 'itemVariationId');
+                $variationId = (int) $this->feldOrderItemItemVariationId($orderItem);
             }
 
             /** @var PluginConfig $config */
@@ -64,18 +74,26 @@ class AfterBasketToOrderDiagnoseListener
             // ---- Quell-Warenkorbartikel: alle in Frage kommenden Felder ----
             $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-DIAG] NACH BASKET->ORDER (Quell-Warenkorbartikel)'
-                . ' | variationId=' . $variationId,
+                . ' | variationId=' . $variationId
+                . ' | originOrderVariationProperties='
+                    . $this->anzahl($this->feldBasketItemOriginOrderVariationProperties($basketItem))
+                . ' | basketItemOrderParams='
+                    . $this->anzahl($this->feldBasketItemOrderParams($basketItem))
+                . ' | basketItemVariationProperties='
+                    . $this->anzahl($this->feldBasketItemVariationProperties($basketItem)),
                 [
                     'basketItem.id'
-                        => $this->alsText($this->leseFeld($basketItem, 'id')),
+                        => $this->alsText($this->feldBasketItemId($basketItem)),
                     'basketItem.variationId'
-                        => $this->alsText($this->leseFeld($basketItem, 'variationId')),
+                        => $this->alsText($this->feldBasketItemVariationId($basketItem)),
                     'basketItem.originOrderVariationProperties'
-                        => $this->alsText($this->leseFeld($basketItem, 'originOrderVariationProperties')),
+                        => $this->alsText($this->feldBasketItemOriginOrderVariationProperties($basketItem)),
                     'basketItem.basketItemOrderParams'
-                        => $this->alsText($this->leseFeld($basketItem, 'basketItemOrderParams')),
+                        => $this->alsText($this->feldBasketItemOrderParams($basketItem)),
                     'basketItem.basketItemVariationProperties'
-                        => $this->alsText($this->leseFeld($basketItem, 'basketItemVariationProperties')),
+                        => $this->alsText($this->feldBasketItemVariationProperties($basketItem)),
+                    'basketItem.schluessel'
+                        => $this->schluesselListe($basketItem),
                 ]
             );
 
@@ -83,21 +101,21 @@ class AfterBasketToOrderDiagnoseListener
             $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-DIAG] NACH BASKET->ORDER (entstandene Auftragsposition)'
                 . ' | variationId=' . $variationId
-                . ' | orderProperties=' . $this->anzahl($this->leseFeld($orderItem, 'orderProperties'))
-                . ' | properties=' . $this->anzahl($this->leseFeld($orderItem, 'properties'))
-                . ' | orderPropertyItems=' . $this->anzahl($this->leseFeld($orderItem, 'orderPropertyItems'))
-                . ' | references=' . $this->anzahl($this->leseFeld($orderItem, 'references')),
+                . ' | orderProperties=' . $this->anzahl($this->feldOrderItemOrderProperties($orderItem))
+                . ' | properties=' . $this->anzahl($this->feldOrderItemProperties($orderItem))
+                . ' | orderPropertyItems=' . $this->anzahl($this->feldOrderItemOrderPropertyItems($orderItem))
+                . ' | references=' . $this->anzahl($this->feldOrderItemReferences($orderItem)),
                 [
                     'orderItem.itemVariationId'
-                        => $this->alsText($this->leseFeld($orderItem, 'itemVariationId')),
+                        => $this->alsText($this->feldOrderItemItemVariationId($orderItem)),
                     'orderItem.orderProperties'
-                        => $this->alsText($this->leseFeld($orderItem, 'orderProperties')),
+                        => $this->alsText($this->feldOrderItemOrderProperties($orderItem)),
                     'orderItem.properties'
-                        => $this->alsText($this->leseFeld($orderItem, 'properties')),
+                        => $this->alsText($this->feldOrderItemProperties($orderItem)),
                     'orderItem.orderPropertyItems'
-                        => $this->alsText($this->leseFeld($orderItem, 'orderPropertyItems')),
+                        => $this->alsText($this->feldOrderItemOrderPropertyItems($orderItem)),
                     'orderItem.references'
-                        => $this->alsText($this->leseFeld($orderItem, 'references')),
+                        => $this->alsText($this->feldOrderItemReferences($orderItem)),
                     'orderItem.schluessel'
                         => $this->schluesselListe($orderItem),
                 ]
@@ -110,6 +128,107 @@ class AfterBasketToOrderDiagnoseListener
             );
         }
     }
+
+    // ------------------------------------------------------------------
+    // FESTE LESEFUNKTIONEN - je Feld eine eigene.
+    // KEINE dynamischen Property-Namen (Plenty-Sandbox verbietet das).
+    // ------------------------------------------------------------------
+
+    /** basketItem.id */
+    private function feldBasketItemId($q)
+    {
+        if (is_object($q)) { return isset($q->id) ? $q->id : null; }
+        if (is_array($q))  { return isset($q['id']) ? $q['id'] : null; }
+        return null;
+    }
+
+    /** basketItem.variationId */
+    private function feldBasketItemVariationId($q)
+    {
+        if (is_object($q)) { return isset($q->variationId) ? $q->variationId : 0; }
+        if (is_array($q))  { return isset($q['variationId']) ? $q['variationId'] : 0; }
+        return 0;
+    }
+
+    /** basketItem.originOrderVariationProperties */
+    private function feldBasketItemOriginOrderVariationProperties($q)
+    {
+        if (is_object($q)) {
+            return isset($q->originOrderVariationProperties) ? $q->originOrderVariationProperties : null;
+        }
+        if (is_array($q)) {
+            return isset($q['originOrderVariationProperties']) ? $q['originOrderVariationProperties'] : null;
+        }
+        return null;
+    }
+
+    /** basketItem.basketItemOrderParams */
+    private function feldBasketItemOrderParams($q)
+    {
+        if (is_object($q)) {
+            return isset($q->basketItemOrderParams) ? $q->basketItemOrderParams : null;
+        }
+        if (is_array($q)) {
+            return isset($q['basketItemOrderParams']) ? $q['basketItemOrderParams'] : null;
+        }
+        return null;
+    }
+
+    /** basketItem.basketItemVariationProperties */
+    private function feldBasketItemVariationProperties($q)
+    {
+        if (is_object($q)) {
+            return isset($q->basketItemVariationProperties) ? $q->basketItemVariationProperties : null;
+        }
+        if (is_array($q)) {
+            return isset($q['basketItemVariationProperties']) ? $q['basketItemVariationProperties'] : null;
+        }
+        return null;
+    }
+
+    /** orderItem.itemVariationId */
+    private function feldOrderItemItemVariationId($q)
+    {
+        if (is_object($q)) { return isset($q->itemVariationId) ? $q->itemVariationId : 0; }
+        if (is_array($q))  { return isset($q['itemVariationId']) ? $q['itemVariationId'] : 0; }
+        return 0;
+    }
+
+    /** orderItem.orderProperties */
+    private function feldOrderItemOrderProperties($q)
+    {
+        if (is_object($q)) { return isset($q->orderProperties) ? $q->orderProperties : null; }
+        if (is_array($q))  { return isset($q['orderProperties']) ? $q['orderProperties'] : null; }
+        return null;
+    }
+
+    /** orderItem.properties */
+    private function feldOrderItemProperties($q)
+    {
+        if (is_object($q)) { return isset($q->properties) ? $q->properties : null; }
+        if (is_array($q))  { return isset($q['properties']) ? $q['properties'] : null; }
+        return null;
+    }
+
+    /** orderItem.orderPropertyItems */
+    private function feldOrderItemOrderPropertyItems($q)
+    {
+        if (is_object($q)) { return isset($q->orderPropertyItems) ? $q->orderPropertyItems : null; }
+        if (is_array($q))  { return isset($q['orderPropertyItems']) ? $q['orderPropertyItems'] : null; }
+        return null;
+    }
+
+    /** orderItem.references */
+    private function feldOrderItemReferences($q)
+    {
+        if (is_object($q)) { return isset($q->references) ? $q->references : null; }
+        if (is_array($q))  { return isset($q['references']) ? $q['references'] : null; }
+        return null;
+    }
+
+    // ------------------------------------------------------------------
+    // Hilfsfunktionen fuer die Ausgabe
+    // ------------------------------------------------------------------
 
     /**
      * Macht aus einem beliebigen Feldinhalt lesbaren Text fuers Log.
@@ -132,7 +251,7 @@ class AfterBasketToOrderDiagnoseListener
             return '(nicht als JSON darstellbar)';
         }
         if (strlen($json) > self::FELD_MAX) {
-            $json = substr($json, 0, self::FELD_MAX) . ' …(Feld gekuerzt)';
+            $json = substr($json, 0, self::FELD_MAX) . ' ...(Feld gekuerzt)';
         }
         return $json;
     }
@@ -163,9 +282,11 @@ class AfterBasketToOrderDiagnoseListener
     }
 
     /**
-     * Listet die vorhandenen Schluessel/Felder der Auftragsposition auf.
+     * Listet die vorhandenen Schluessel/Felder auf.
      * Damit sehen wir auch dann etwas, wenn die Werte in einem Feld
      * landen, an das wir bisher nicht gedacht haben.
+     * (foreach ueber ein Objekt liest nur die sichtbaren Felder - das ist
+     * KEIN dynamischer Property-Zugriff und in der Sandbox erlaubt.)
      *
      * @param mixed $quelle
      * @return string
@@ -183,17 +304,5 @@ class AfterBasketToOrderDiagnoseListener
             return implode(',', $namen);
         }
         return '(keine Felder lesbar)';
-    }
-
-    /** Liest ein benanntes Feld aus Objekt ODER Array. */
-    private function leseFeld($quelle, $name)
-    {
-        if (is_object($quelle) && isset($quelle->$name)) {
-            return $quelle->$name;
-        }
-        if (is_array($quelle) && isset($quelle[$name])) {
-            return $quelle[$name];
-        }
-        return null;
     }
 }
