@@ -18,29 +18,32 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *
  *   BELEGT ist: Bei Auftrag 329670 waren die sechs Werte im Warenkorb
  *   vollstaendig sichtbar und am erzeugten Auftrag leer - der Verlust
- *   passiert also beim Uebergang Warenkorb -> Auftrag. Die genaue
- *   Ursache dieses Verlusts (z. B. Sitzungswechsel bei externer
- *   Bezahlung) ist damit NICHT bewiesen und wird hier bewusst nicht
- *   behauptet.
+ *   passiert also beim Uebergang Warenkorb -> Auftrag. Die genaue Ursache
+ *   dieses Verlusts (z. B. Sitzungswechsel bei externer Bezahlung) ist
+ *   damit NICHT bewiesen und wird hier bewusst nicht behauptet.
  *
- * WICHTIG - QUELLENAUSWAHL (v1.5.13, nach externem Review):
- *   Es wird NICHT die erste nicht-leere Quelle genommen. Stattdessen
- *   werden ALLE bekannten Felder des Warenkorb-Artikels geprueft und die
- *   sechs erwarteten Werte aus nicht-leeren Eintraegen ZUSAMMENGEFUEHRT:
+ * QUELLENAUSWAHL:
+ *   Es wird NICHT die erste nicht-leere Quelle genommen. Stattdessen werden
+ *   ALLE bekannten Felder des Warenkorb-Artikels geprueft und die sechs
+ *   erwarteten Werte aus nicht-leeren Eintraegen ZUSAMMENGEFUEHRT:
  *       originOrderVariationProperties
  *       basketItemOrderParams          (offiziell dokumentiert)
  *       basketItemVariationProperties  (offiziell dokumentiert)
  *   Liefern zwei Quellen fuer dieselbe Eigenschaft UNTERSCHIEDLICHE
  *   nicht-leere Werte, wird NICHTS uebertragen und ein [MIRKA-PROBLEM]
- *   gemeldet - es wird nicht geraten.
+ *   gemeldet - es wird nicht geraten. Nur die sechs in der PluginConfig
+ *   hinterlegten IDs werden akzeptiert, und nur bei 6/6 wird uebergeben.
  *
- *   Es werden ausschliesslich die sechs in der PluginConfig hinterlegten
- *   Eigenschafts-IDs akzeptiert, und nur bei vollstaendigen 6/6 wird
- *   uebergeben.
+ * WICHTIG - PLENTY-SANDBOX (Fehler beim Bereitstellen v1.5.13a):
+ *   "dynamic property names are not allowed" - ein Zugriff der Form
+ *   $objekt->$name ist VERBOTEN. Deshalb sind hier ALLE Feldzugriffe
+ *   FEST AUSGESCHRIEBEN (eigene kleine Methode je Feld), genau wie im
+ *   bewaehrten BasketItemListener. Bitte nie wieder auf eine generische
+ *   leseFeld($obj, $name)-Hilfsfunktion umstellen.
  *
  * STATUS DER DATENFORM:
- *   Plenty dokumentiert das Ereignis und die Methode, aber KEIN Schema
- *   fuer $variationProperties. Die hier verwendete Form
+ *   Plenty dokumentiert das Ereignis und die Methode, aber KEIN Schema fuer
+ *   $variationProperties. Die hier verwendete Form
  *   [ ['propertyId' => 64, 'value' => '5C0'], ... ] ist deshalb bis zum
  *   ersten echten Test ausdruecklich UNBEWIESEN (Teststatus).
  *
@@ -57,13 +60,6 @@ class BasketToOrderListener
     /** Feste Log-Kennung wie in den anderen Listenern. */
     const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
 
-    /** Alle Felder des Warenkorb-Artikels, die Eigenschaften tragen koennen. */
-    const QUELLEN = [
-        'originOrderVariationProperties',
-        'basketItemOrderParams',
-        'basketItemVariationProperties',
-    ];
-
     /**
      * Wird UNMITTELBAR bevor ein Warenkorb-Artikel zur Auftragsposition
      * wird aufgerufen.
@@ -77,7 +73,7 @@ class BasketToOrderListener
             }
 
             // ---- Nur unsere Konfigurator-Variante behandeln ----
-            $variationId = (int) $this->leseFeld($basketItem, 'variationId');
+            $variationId = (int) $this->feldVariationId($basketItem);
             /** @var PluginConfig $config */
             $config = pluginApp(PluginConfig::class);
             if (!$config->isHandledVariation($variationId)) {
@@ -101,17 +97,29 @@ class BasketToOrderListener
                 }
             }
 
-            // ---- ALLE Quellen pruefen und nicht-leere Werte zusammenfuehren ----
+            // ---- ALLE Quellen einsammeln (feste Zugriffe, kein $obj->$name) ----
+            $quellenListe = [];
+            $q1 = $this->feldOriginOrderVariationProperties($basketItem);
+            if (is_array($q1) && count($q1) > 0) {
+                $quellenListe[] = ['name' => 'originOrderVariationProperties', 'liste' => $q1];
+            }
+            $q2 = $this->feldBasketItemOrderParams($basketItem);
+            if (is_array($q2) && count($q2) > 0) {
+                $quellenListe[] = ['name' => 'basketItemOrderParams', 'liste' => $q2];
+            }
+            $q3 = $this->feldBasketItemVariationProperties($basketItem);
+            if (is_array($q3) && count($q3) > 0) {
+                $quellenListe[] = ['name' => 'basketItemVariationProperties', 'liste' => $q3];
+            }
+
+            // ---- Nicht-leere Werte der sechs IDs zusammenfuehren ----
             $gefunden      = []; // propertyId => Wert
             $herkunft      = []; // propertyId => Quellenname
             $widersprueche = []; // Klartext-Meldungen
 
-            foreach (self::QUELLEN as $quellenName) {
-                $liste = $this->leseFeld($basketItem, $quellenName);
-                if (!is_array($liste)) {
-                    continue;
-                }
-                foreach ($liste as $prop) {
+            foreach ($quellenListe as $quelle) {
+                $quellenName = $quelle['name'];
+                foreach ($quelle['liste'] as $prop) {
                     $pid = (int) $this->getPropertyId($prop);
                     $val = trim((string) $this->getValue($prop));
                     if ($pid <= 0 || $val === '') {
@@ -132,7 +140,7 @@ class BasketToOrderListener
                 }
             }
 
-            // ---- Fehlende bestimmen ----
+            // ---- Fehlende bestimmen + Payload bauen ----
             $fehlende     = [];
             $zuUebergeben = [];
             $herkunftText = [];
@@ -154,6 +162,7 @@ class BasketToOrderListener
                 '[MIRKA-DIAG] VOR BASKET->ORDER'
                 . ' | variationId=' . $variationId
                 . ' | gefunden=' . (6 - count($fehlende)) . '/6'
+                . ' | Quellen mit Inhalt=' . count($quellenListe)
                 . ' | Herkunft: ' . implode(' ', $herkunftText)
                 . ' | erwartete IDs=' . implode(',', $erwartet)
             );
@@ -197,17 +206,56 @@ class BasketToOrderListener
         }
     }
 
-    /**
-     * Liest ein benanntes Feld aus einem Objekt ODER Array
-     * (Plenty-Sandbox-konform, keine dynamischen Funktionen).
-     */
-    private function leseFeld($quelle, $name)
+    // ------------------------------------------------------------------
+    //  FESTE Feldzugriffe - je Feld eine eigene Methode.
+    //  Dynamische Property-Namen ($obj->$name) sind in der Plenty-Sandbox
+    //  VERBOTEN ("dynamic property names are not allowed").
+    // ------------------------------------------------------------------
+
+    /** Liest variationId (Objekt oder Array). */
+    private function feldVariationId($q)
     {
-        if (is_object($quelle) && isset($quelle->$name)) {
-            return $quelle->$name;
+        if (is_object($q)) {
+            return isset($q->variationId) ? $q->variationId : 0;
         }
-        if (is_array($quelle) && isset($quelle[$name])) {
-            return $quelle[$name];
+        if (is_array($q)) {
+            return isset($q['variationId']) ? $q['variationId'] : 0;
+        }
+        return 0;
+    }
+
+    /** Liest originOrderVariationProperties (Objekt oder Array). */
+    private function feldOriginOrderVariationProperties($q)
+    {
+        if (is_object($q)) {
+            return isset($q->originOrderVariationProperties) ? $q->originOrderVariationProperties : null;
+        }
+        if (is_array($q)) {
+            return isset($q['originOrderVariationProperties']) ? $q['originOrderVariationProperties'] : null;
+        }
+        return null;
+    }
+
+    /** Liest basketItemOrderParams (Objekt oder Array). */
+    private function feldBasketItemOrderParams($q)
+    {
+        if (is_object($q)) {
+            return isset($q->basketItemOrderParams) ? $q->basketItemOrderParams : null;
+        }
+        if (is_array($q)) {
+            return isset($q['basketItemOrderParams']) ? $q['basketItemOrderParams'] : null;
+        }
+        return null;
+    }
+
+    /** Liest basketItemVariationProperties (Objekt oder Array). */
+    private function feldBasketItemVariationProperties($q)
+    {
+        if (is_object($q)) {
+            return isset($q->basketItemVariationProperties) ? $q->basketItemVariationProperties : null;
+        }
+        if (is_array($q)) {
+            return isset($q['basketItemVariationProperties']) ? $q['basketItemVariationProperties'] : null;
         }
         return null;
     }
