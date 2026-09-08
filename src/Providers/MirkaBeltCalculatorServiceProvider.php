@@ -100,8 +100,11 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
         //    im Warenkorb vollstaendig da und am erzeugten Auftrag leer -
         //    der Verlust passiert beim Uebergang Warenkorb -> Auftrag. Die
         //    genaue Ursache dieses Verlusts ist NICHT bewiesen.
-        //    ACHTUNG: Der Session-Zettel ist seit v1.5.13 KEIN Rueckfall
-        //    mehr - der OrderRenameListener uebernimmt daraus nichts.
+        //    v1.5.15: Der Sitzungs-Zettel ist wieder LETZTER RUECKFALL im
+        //    OrderRenameListener - er fuellt nur noch Felder, die dieser
+        //    direkte Weg leer gelassen hat. In v1.5.13/v1.5.14 war er
+        //    ersatzlos abgeschaltet, obwohl der direkte Weg noch 0/6
+        //    lieferte (Auftrag 329681) - dadurch kam gar nichts an.
         $eventDispatcher->listen(
             BeforeBasketItemToOrderItem::class,
             'MirkaBeltCalculator\\Listeners\\BasketToOrderListener@handle'
