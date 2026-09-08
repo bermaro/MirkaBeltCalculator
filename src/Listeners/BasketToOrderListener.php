@@ -3,11 +3,12 @@
 namespace MirkaBeltCalculator\Listeners;
 
 use Plenty\Modules\Webshop\Events\BeforeBasketItemToOrderItem;
+use Plenty\Modules\Basket\Contracts\BasketItemRepositoryContract;
 use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * BasketToOrderListener (v1.5.18)
+ * BasketToOrderListener (v1.5.20)
  *
  * NEU AB v1.5.18: Der BasketItemListener speichert die sechs Werte jetzt
  * dauerhaft in den basketItemOrderParams des Warenkorbartikels. Genau
@@ -143,12 +144,52 @@ class BasketToOrderListener
             $q2 = $this->alsListe($this->feldBasketItemOrderParams($basketItem));
             $q3 = $this->alsListe($this->feldBasketItemVariationProperties($basketItem));
 
+            // NEU v1.5.20 - VIERTE QUELLE: den Warenkorbartikel FRISCH aus
+            // der Datenbank laden. Begruendung: Das Objekt aus dem Ereignis
+            // kann Beziehungen ungeladen mitbringen - basketItemOrderParams
+            // stand dort bisher immer auf 0. Ein frisch geladener Artikel
+            // kann dieselben Daten sehr wohl enthalten. Rein lesend.
+            $q4 = [];
+            $basketItemId = (int) $this->feldBasketItemId($basketItem);
+            if ($basketItemId > 0) {
+                try {
+                    /** @var BasketItemRepositoryContract $repo */
+                    $repo   = pluginApp(BasketItemRepositoryContract::class);
+                    $frisch = $repo->findOneById($basketItemId);
+                    $q4     = $this->alsListe($this->orderParamsAusModell($frisch));
+                    $this->getLogger(self::LOG_KENNUNG)->error(
+                        '[MIRKA-STRUKTUR] FRISCH geladener Warenkorbartikel'
+                        . ' | basketItemId=' . $basketItemId
+                        . ' | Felder: ' . $this->feldnamenKurz($frisch)
+                        . ' | basketItemOrderParams: ' . $this->strukturDetail($q4)
+                    );
+                } catch (\Throwable $egal) {
+                    $this->getLogger(self::LOG_KENNUNG)->error(
+                        '[MIRKA-PROBLEM] Frisches Laden des Warenkorbartikels'
+                        . ' fehlgeschlagen | basketItemId=' . $basketItemId
+                        . ' | Grund=' . $egal->getMessage()
+                    );
+                }
+            }
+
+            // NEU v1.5.20: Auch den Warenkorbartikel AUS DEM EREIGNIS einmal
+            // vollstaendig auflisten. Damit sehen wir alle verfuegbaren
+            // Felder - auch solche, an die wir bisher nicht gedacht haben.
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-STRUKTUR] Warenkorbartikel aus dem Ereignis'
+                . ' | basketItemId=' . $basketItemId
+                . ' | Felder: ' . $this->feldnamenKurz($basketItem)
+            );
+
             $quellenListe = [];
             if (count($q1) > 0) {
                 $quellenListe[] = ['name' => 'originOrderVariationProperties', 'liste' => $q1];
             }
             if (count($q2) > 0) {
                 $quellenListe[] = ['name' => 'basketItemOrderParams', 'liste' => $q2];
+            }
+            if (count($q4) > 0) {
+                $quellenListe[] = ['name' => 'basketItemOrderParams(frisch)', 'liste' => $q4];
             }
             if (count($q3) > 0) {
                 $quellenListe[] = ['name' => 'basketItemVariationProperties', 'liste' => $q3];
@@ -454,6 +495,50 @@ class BasketToOrderListener
     //  FESTE Feldzugriffe auf den WARENKORB-ARTIKEL.
     //  Dynamische Property-Namen sind in der Plenty-Sandbox VERBOTEN.
     // ------------------------------------------------------------------
+
+    /** basketItem.id - erst direkt, sonst ueber die Modell-Umwandlung. */
+    private function feldBasketItemId($q)
+    {
+        if (is_object($q) && isset($q->id)) {
+            return $q->id;
+        }
+        if (is_array($q) && isset($q['id'])) {
+            return $q['id'];
+        }
+        $felder = $this->alsFelder($q);
+        return isset($felder['id']) ? $felder['id'] : 0;
+    }
+
+    /** basketItemOrderParams aus einem (Modell-)Objekt herausholen. */
+    private function orderParamsAusModell($artikel)
+    {
+        if (is_object($artikel) && isset($artikel->basketItemOrderParams)) {
+            return $artikel->basketItemOrderParams;
+        }
+        if (is_array($artikel) && isset($artikel['basketItemOrderParams'])) {
+            return $artikel['basketItemOrderParams'];
+        }
+        $felder = $this->alsFelder($artikel);
+        return isset($felder['basketItemOrderParams']) ? $felder['basketItemOrderParams'] : null;
+    }
+
+    /** Listet die Feldnamen eines Objekts/Arrays kurz auf (fuers Log). */
+    private function feldnamenKurz($objekt)
+    {
+        $felder = $this->alsFelder($objekt);
+        if (count($felder) === 0) {
+            return '(nicht lesbar)';
+        }
+        $teile = [];
+        foreach ($felder as $name => $wert) {
+            $teile[] = (string) $name . '=' . $this->wertKurz($wert);
+        }
+        $text = implode('|', $teile);
+        if (strlen($text) > self::STRUKTUR_MAX) {
+            $text = substr($text, 0, self::STRUKTUR_MAX) . '...(gekuerzt)';
+        }
+        return $text;
+    }
 
     /** Liest variationId (Objekt oder Array). */
     private function feldVariationId($q)
