@@ -7,6 +7,7 @@ use Plenty\Plugin\Log\Loggable;
 use Plenty\Plugin\Events\Dispatcher;
 use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
 use Plenty\Modules\Order\Events\OrderCreated;
+use Plenty\Modules\Webshop\Events\BeforeBasketItemToOrderItem;
 
 /**
  * MirkaBeltCalculatorServiceProvider (v1.4.7)
@@ -86,6 +87,20 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
         $eventDispatcher->listen(
             OrderCreated::class,
             'MirkaBeltCalculator\\Listeners\\OrderPriceGuardListener@handle'
+        );
+
+        // 4) NEU v1.5.13: Der EIGENTLICHE Fix fuer den Datenverlust
+        //    Warenkorb -> Auftrag. Am offiziellen Plenty-Uebergang
+        //    BeforeBasketItemToOrderItem werden die sechs Kundenwerte
+        //    DIREKT vom Warenkorb-Artikel an die entstehende Auftrags-
+        //    position mitgegeben (addAdditionalVariationProperties).
+        //    Damit entfaellt die Abhaengigkeit vom Sitzungs-Zettel und vom
+        //    Preisvergleich (Ursache der leeren Positionen bei externer
+        //    Bezahlung und bei gleich teuren Baendern, Auftrag 329670).
+        //    Der Zettel-/Umbenenn-Weg bleibt als Rueckfall bestehen.
+        $eventDispatcher->listen(
+            BeforeBasketItemToOrderItem::class,
+            'MirkaBeltCalculator\\Listeners\\BasketToOrderListener@handle'
         );
     }
 }
