@@ -10,7 +10,32 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.5.24 - STABIL)
+ * BasketItemListener (v1.5.25)
+ *
+ * ---------------------------------------------------------------------
+ * v1.5.25 (08.09.2026): LOG-STUFEN KORRIGIERT + PERSISTENZ ALS MESSUNG
+ * ---------------------------------------------------------------------
+ *   1) LOG-STUFEN: Bisher liefen ALLE Log-Zeilen ueber error() - auch
+ *      Erfolge. Grund war eine echte Plenty-Regel: nur ab Stufe "error"
+ *      aufwaerts erscheint eine Zeile OHNE Uebersetzungs-Schluessel.
+ *      Beleg: Plenty-Doku "Adding log functionality" - "The above
+ *      conditions do not apply if the log level is set to error,
+ *      critical, alert or emergency."
+ *      Jetzt: OK/Routine/Messung laufen auf info() MIT Uebersetzung
+ *      (resources/lang/de|en/mirka.properties); echte Probleme bleiben
+ *      auf error(). Ein gesundes Log sieht damit nicht mehr aus wie ein
+ *      Fehler-Log.
+ *
+ *   2) BASKET-PERSISTENZ WIEDER AKTIV - aber nur als kontrollierte
+ *      Messung und NUR bei Debug=AN (Tab 6). Sie ist der einzige nie
+ *      live gemessene Weg, die sechs Werte sitzungs-UNABHAENGIG an den
+ *      Auftrag zu bringen. Sie meldet Plentys ECHTEN Validator-Fehler
+ *      (getMessageBag) auf Error-Stufe. Der Checkout bleibt stabil: der
+ *      Schreibzugriff laeuft nur bei AfterBasketItemAdd (nicht in der
+ *      Auftrags-Vorschau) und mit $fireEvents=false; die beiden
+ *      Schleifen-Listener bleiben im ServiceProvider abgeschaltet.
+ *      Debug=AUS -> exakt der stabile v1.5.24-Betrieb (Preis -> Zettel).
+ * ---------------------------------------------------------------------
  *
  * ---------------------------------------------------------------------
  * v1.5.24 (08.09.2026): ZURUECK AUF DEN FUNKTIONIERENDEN BETRIEB
@@ -208,7 +233,15 @@ class BasketItemListener
         if (!$this->debugAn) {
             return;
         }
-        $this->getLogger(self::LOG_KENNUNG)->error($meldung, $kontext);
+        // NEU v1.5.25: Routine-Diagnose laeuft jetzt auf Stufe "info"
+        // (nicht mehr "error"). Damit die Zeile im Backend-Log ueberhaupt
+        // erscheint, MUSS der Log-Code eine Uebersetzung haben - sonst
+        // verwirft Plenty alles unterhalb von "error". Die Uebersetzung
+        // liegt in resources/lang/de|en/mirka.properties (Schluessel diag).
+        // Der eigentliche Klartext steht in der Zusatzinfo ("text").
+        $k = is_array($kontext) ? $kontext : [];
+        $k['text'] = $meldung;
+        $this->getLogger(self::LOG_KENNUNG)->info('MirkaBeltCalculator::mirka.diag', $k);
     }
 
 
@@ -369,20 +402,48 @@ class BasketItemListener
             }
 
             // ---------------------------------------------------------
-            // ABGESCHALTET in v1.5.24: Basket-Persistenz.
+            // NEU v1.5.25: BASKET-PERSISTENZ ALS KONTROLLIERTE MESSUNG.
             // ---------------------------------------------------------
-            //   Der Schreibzugriff in den Warenkorb (updateBasketItem mit
-            //   basketItemOrderParams) wurde von Plenty ohnehin mit
-            //   "validation error found" abgelehnt - er hat also nie
-            //   funktioniert, aber bei jedem Zulegen zwei zusaetzliche
-            //   Datenbankzugriffe verursacht.
-            //   Solange der Checkout nicht wieder stabil laeuft, wird in
-            //   den Warenkorb des Kunden NICHTS geschrieben.
-            //   Der Code der Methode bleibt liegen (siehe unten) und wird
-            //   erst wieder eingeschaltet, wenn der Shop stabil ist und
-            //   der Validator-MessageBag ausgewertet wurde.
-            // if (self::PERSISTENZ_AKTIV) { ... }
+            //   Warum wieder aktiv: Dies ist der EINZIGE bisher nie live
+            //   gemessene Weg, der die sechs Werte sitzungs-UNABHAENGIG an
+            //   den Auftrag bringen wuerde (die Werte lebten dann am
+            //   Warenkorb-Datensatz, nicht in der fluechtigen Sitzung).
+            //   v1.5.24 hatte ihn abgeschaltet, BEVOR das Ergebnis je zu
+            //   sehen war.
+            //
+            //   Warum das den Checkout NICHT stoert (belegt):
+            //     - Der Schreibzugriff laeuft NUR hier, bei AfterBasketItemAdd
+            //       (echtes In-den-Warenkorb-Legen), NICHT in der staendig
+            //       neu gerechneten Auftrags-VORSCHAU. Die beiden Listener,
+            //       die die Ausloggen-Schleife ausgeloest hatten
+            //       (BeforeBasketItemToOrderItem / AfterBasketItemToOrderItem),
+            //       bleiben im ServiceProvider ABGESCHALTET.
+            //     - updateBasketItem() wird mit $fireEvents = false gerufen -
+            //       loest also KEINE weiteren Warenkorb-Ereignisse aus.
+            //
+            //   Warum nur bei Debug: Solange wir messen, laeuft der
+            //   Schreibzugriff nur, wenn Tab 6 (Debug) AN ist. Ist Debug AUS,
+            //   arbeitet das Plugin exakt wie die stabile v1.5.24 (Preis ->
+            //   Zettel), ohne jeden zusaetzlichen Datenbankzugriff. So kann
+            //   ein einziger Warenkorb-Test die offene Frage klaeren, ohne
+            //   den Normalbetrieb zu belasten.
+            //
+            //   Die Methode selbst meldet Plentys ECHTEN Validator-Fehler
+            //   (getMessageBag) auf Error-Stufe - genau die verlangte
+            //   Debug-Funktion. Der Kauf wird durch nichts davon gestoert
+            //   (eigenes try/catch).
             // ---------------------------------------------------------
+            if ($config->isDebugMode()) {
+                try {
+                    $this->persistiereAmWarenkorbArtikel($basketItem, $orderProperties, $config);
+                } catch (\Throwable $egal) {
+                    $this->getLogger(self::LOG_KENNUNG)->error(
+                        '[MIRKA-PROBLEM] Basket-Persistenz (Messung) unerwartet abgebrochen | Grund='
+                        . $egal->getMessage(),
+                        ['message' => $egal->getMessage()]
+                    );
+                }
+            }
 
 
         } catch (\Throwable $t) {
@@ -505,22 +566,26 @@ class BasketItemListener
         $vorZustand = $this->zustandKurz($vorArtikel);
 
         if ($vorAnzahl >= 6) {
-            $this->getLogger(self::LOG_KENNUNG)->error(
-                '[MIRKA-KURZ] BASKET-PERSIST | basketItemId=' . $basketItemId
-                . ' | vor=6/6 | nichts zu tun (Werte stehen bereits am Artikel).'
+            // NEU v1.5.25: OK/No-op -> Stufe "info" (kein "Error").
+            $this->getLogger(self::LOG_KENNUNG)->info(
+                'MirkaBeltCalculator::mirka.persistOk',
+                ['text' => '[MIRKA-KURZ] BASKET-PERSIST | basketItemId=' . $basketItemId
+                    . ' | vor=6/6 | nichts zu tun (Werte stehen bereits am Artikel).']
             );
             return;
         }
 
         // ---- MESSUNG: was steht ueberhaupt am frisch geladenen Artikel? ----
-        $this->getLogger(self::LOG_KENNUNG)->error(
-            '[MIRKA-STRUKTUR] Warenkorbartikel frisch geladen'
-            . ' | basketItemId=' . $basketItemId
-            . ' | Zustand: ' . $vorZustand
-            . ' | vorhandene basketItemOrderParams=' . count($vorParams)
-            . ' | davon unsere=' . $vorAnzahl . '/6'
-            . ' | Inhalt: ' . $this->paramsKurz($vorParams)
-            . ' | Zu sendende Mirka-Parameter: ' . $this->paramsKurz($params)
+        // NEU v1.5.25: reine Messung -> Stufe "info" (kein "Error").
+        $this->getLogger(self::LOG_KENNUNG)->info(
+            'MirkaBeltCalculator::mirka.messung',
+            ['text' => '[MIRKA-STRUKTUR] Warenkorbartikel frisch geladen'
+                . ' | basketItemId=' . $basketItemId
+                . ' | Zustand: ' . $vorZustand
+                . ' | vorhandene basketItemOrderParams=' . count($vorParams)
+                . ' | davon unsere=' . $vorAnzahl . '/6'
+                . ' | Inhalt: ' . $this->paramsKurz($vorParams)
+                . ' | Zu sendende Mirka-Parameter: ' . $this->paramsKurz($params)]
         );
 
         // ---- Fremde Parameter VOLLSTAENDIG unveraendert uebernehmen ----
@@ -613,12 +678,16 @@ class BasketItemListener
         $zustandGleich = ($vorZustand === $nachZustand);
 
         if ($nachAnzahl >= 6 && $zustandGleich) {
-            $this->getLogger(self::LOG_KENNUNG)->error(
-                '[MIRKA-KURZ] BASKET-PERSIST | basketItemId=' . $basketItemId
-                . ' | vor=' . $vorAnzahl . '/6'
-                . ' | nachReload=' . $nachAnzahl . '/6'
-                . ' | Menge/Preise unveraendert=ja'
-                . ' | ERFOLG'
+            // NEU v1.5.25: ERFOLG -> Stufe "info" (kein "Error").
+            // Das ist der gruene Beweis, dass die Werte dauerhaft am
+            // Warenkorb-Datensatz angekommen sind.
+            $this->getLogger(self::LOG_KENNUNG)->info(
+                'MirkaBeltCalculator::mirka.persistOk',
+                ['text' => '[MIRKA-KURZ] BASKET-PERSIST | basketItemId=' . $basketItemId
+                    . ' | vor=' . $vorAnzahl . '/6'
+                    . ' | nachReload=' . $nachAnzahl . '/6'
+                    . ' | Menge/Preise unveraendert=ja'
+                    . ' | ERFOLG']
             );
             return;
         }
@@ -899,16 +968,21 @@ class BasketItemListener
             $w   = $eintrag['werte'];
             // Feste Kennung: ALLE Mirka-Sammelzeilen landen unter einem
             // einzigen Identifikator -> im Log genau EIN Filter noetig.
-            $this->getLogger(self::LOG_KENNUNG)->error(
-                '[MIRKA-KURZ] WARENKORB'
-                . ' | Qualitaet=' . $this->zettelWert($w, $cfg->getPropertyIdSchleifmittel())
-                . ' | Koernung='  . $this->zettelWert($w, $cfg->getPropertyIdKoernung())
-                . ' | Verbindung=' . $this->zettelWert($w, $cfg->getPropertyIdVerbindung())
-                . ' | Breite='    . $this->zettelWert($w, $cfg->getPropertyIdBreite())
-                . ' | Laenge='    . $this->zettelWert($w, $cfg->getPropertyIdLaenge())
-                . ' | MirkaNr='   . $this->zettelWert($w, $cfg->getPropertyIdMirkaCode())
-                . ' | Preis(brutto)=' . (float) $preis
-                . ' | Session-Zettel=' . count($liste)
+            // NEU v1.5.25: OK-Sammelzeile -> Stufe "info" (kein "Error").
+            // Der lesbare Klartext steht in der Zusatzinfo ("text");
+            // die Uebersetzung (mirka.warenkorb) macht die Info-Zeile im
+            // Backend-Log ueberhaupt sichtbar.
+            $this->getLogger(self::LOG_KENNUNG)->info(
+                'MirkaBeltCalculator::mirka.warenkorb',
+                ['text' => '[MIRKA-KURZ] WARENKORB'
+                    . ' | Qualitaet=' . $this->zettelWert($w, $cfg->getPropertyIdSchleifmittel())
+                    . ' | Koernung='  . $this->zettelWert($w, $cfg->getPropertyIdKoernung())
+                    . ' | Verbindung=' . $this->zettelWert($w, $cfg->getPropertyIdVerbindung())
+                    . ' | Breite='    . $this->zettelWert($w, $cfg->getPropertyIdBreite())
+                    . ' | Laenge='    . $this->zettelWert($w, $cfg->getPropertyIdLaenge())
+                    . ' | MirkaNr='   . $this->zettelWert($w, $cfg->getPropertyIdMirkaCode())
+                    . ' | Preis(brutto)=' . (float) $preis
+                    . ' | Session-Zettel=' . count($liste)]
             );
         } catch (\Throwable $egal) {
             // Sammelzeile ist reine Bequemlichkeit - Fehler ignorieren.
