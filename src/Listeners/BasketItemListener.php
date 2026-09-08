@@ -10,10 +10,26 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.5.25)
+ * BasketItemListener (v1.6.1 - Stufe A)
  *
  * ---------------------------------------------------------------------
- * v1.5.25 (08.09.2026): LOG-STUFEN KORRIGIERT + PERSISTENZ ALS MESSUNG
+ * v1.6.0/1.6.1 (08.09.2026): BASKET-PERSISTENZ ABGESCHALTET (KORREKTUR)
+ * ---------------------------------------------------------------------
+ *   WICHTIG - diese Korrektur ueberholt den v1.5.25-Text darunter:
+ *   Die "Basket-Persistenz" (updateBasketItem mit basketItemOrderParams)
+ *   ist in v1.6.0 NICHT mehr aktiv und wird NICHT mehr aufgerufen. Die
+ *   Live-Messung (Auftrag 329722) zeigte "validation error found"
+ *   (id/variationId/quantity fehlten im Payload) - es wurde also nie etwas
+ *   gespeichert, nur das Log vollgeschrieben. Der Aufruf im handle() ist
+ *   deshalb entfernt; die Methode persistiereAmWarenkorbArtikel() bleibt
+ *   nur als toter Code zur Historie liegen.
+ *   Dieser Listener macht in v1.6.x wieder nur: Eigenschaften lesen ->
+ *   Preis berechnen -> givenPrice setzen -> Sitzungs-Zettel schreiben,
+ *   plus die sichtbare [MIRKA-BUILD]-Kennung beim Zulegen.
+ *   Der folgende v1.5.25-Block ist damit UEBERHOLT (nur noch Historie):
+ *
+ * ---------------------------------------------------------------------
+ * v1.5.25 (08.09.2026) [UEBERHOLT]: LOG-STUFEN + PERSISTENZ ALS MESSUNG
  * ---------------------------------------------------------------------
  *   1) LOG-STUFEN: Bisher liefen ALLE Log-Zeilen ueber error() - auch
  *      Erfolge. Grund war eine echte Plenty-Regel: nur ab Stufe "error"
@@ -282,7 +298,7 @@ class BasketItemListener
             // Auswertung feststeht, welche Version wirklich laeuft (Git-/
             // Webhook-404 hat mehrfach alten Code laufen lassen). KEIN Fehler.
             $this->getLogger(self::LOG_KENNUNG)->error(
-                '[MIRKA-BUILD] Version 1.6.0 | Stufe A (Messung basketItemId->orderItemId)'
+                '[MIRKA-BUILD] Version 1.6.1 | Stufe A (Messung basketItemId->orderItemId)'
                 . ' - dies ist KEINE Fehlermeldung.'
             );
 
