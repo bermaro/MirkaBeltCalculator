@@ -4,12 +4,24 @@ namespace MirkaBeltCalculator\Listeners;
 
 use Plenty\Modules\Order\Events\OrderCreated;
 use Plenty\Modules\Order\Contracts\OrderRepositoryContract;
-use Plenty\Modules\Frontend\Session\Storage\Contracts\FrontendSessionStorageFactoryContract;
 use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.5.3)
+ * OrderRenameListener (v1.5.13)
+ *
+ * WICHTIG - GEAENDERT IN v1.5.13:
+ *   Der Session-Zettel ('mirkaKonfigListe') wird von diesem Listener
+ *   NICHT MEHR zur Befuellung benutzt - auch nicht als Rueckfall. Die
+ *   Methode uebernehmeZettelWerte() und der Preis-Abgleich wurden
+ *   ENTFERNT, weil der Preis kein Identitaetsbeweis ist: ein alter oder
+ *   preisgleicher Zettel konnte einer Position FREMDE Werte geben, die
+ *   danach vollstaendig (6/6) aussahen. Es gilt jetzt:
+ *     Werte kommen direkt vom Warenkorb-Artikel (BasketToOrderListener,
+ *     gelesen als Quelle B/C) -> verwenden.
+ *     Weniger als 6/6 -> Position bleibt BEWUSST unvollstaendig und
+ *     wird gemeldet. Lieber sichtbar unvollstaendig als unsichtbar falsch.
+ *   Die Abschnitte unten zu 'QUELLE Z' / Zettel sind daher HISTORIE.
  *
  * NEU v1.5.3 (13.08.2026): SERVERSEITIGER GUARD.
  *   Zusaetzlich zur Umbenennung prueft dieser Listener jetzt, ob JEDE
@@ -199,9 +211,7 @@ class OrderRenameListener
             // NEU v1.5.7: Aussteigen NUR, wenn BEIDE Funktionen aus sind.
             //  - Tab 7 (Umbenennen) aus + Tab 8 (Fehlerschutz) log/on
             //    -> Datenaufbereitung + Guard muessen weiterlaufen.
-            //  - BEIDE aus -> gar nichts tun. Wichtig, weil sonst
-            //    uebernehmeZettelWerte() liefe und Session-Zettel
-            //    verbrauchen wuerde, obwohl niemand sie braucht.
+            //  - BEIDE aus -> gar nichts tun.
             // (v1.5.3 hatte den frueheren "nur Tab 7"-Ausstieg entfernt,
             //  aber keinen Ersatz fuer den Fall "beide aus" gesetzt.)
             if ($renameModus === 'off' && $guardModus === 'off') {
@@ -369,21 +379,38 @@ class OrderRenameListener
                 }
                 $quelle = 'A(nur Feld 81, ohne Wert)';
 
-                // Quelle B: orderProperties der Typ-15-Zeile.
-                if ($eigenschaftsId === 0) {
-                    try {
-                        foreach ($zeile->orderProperties as $op) {
-                            $opId = (int) $op->propertyId;
-                            if ($opId > 0) {
-                                $eigenschaftsId = $opId;
-                                $wert           = trim((string) $op->value);
-                                $quelle         = 'B(orderProperties Zeile)';
+                // Quelle B (v1.5.13 KORRIGIERT): Die orderProperties der
+                // Typ-15-Zeile werden jetzt IMMER geprueft - auch dann, wenn
+                // die Eigenschafts-ID aus Feld 81 bereits bekannt ist.
+                // Frueher lief dieser Block nur bei UNBEKANNTER ID; dadurch
+                // waeren Werte, die Plenty an genau dieser Zeile ablegt
+                // (moeglicher Zielort von addAdditionalVariationProperties),
+                // unbemerkt liegen geblieben.
+                try {
+                    foreach ($zeile->orderProperties as $op) {
+                        $opId  = (int) $op->propertyId;
+                        $opVal = trim((string) $op->value);
+                        if ($opId <= 0) {
+                            continue;
+                        }
+                        if ($eigenschaftsId === 0) {
+                            // ID war unbekannt -> komplett von hier uebernehmen.
+                            $eigenschaftsId = $opId;
+                            $wert           = $opVal;
+                            $quelle         = 'B(orderProperties Zeile)';
+                            if ($wert !== '') {
                                 break;
                             }
+                        } elseif ($opId === $eigenschaftsId && $opVal !== '' && $wert === '') {
+                            // ID aus Feld 81 bekannt -> passenden, nicht-leeren
+                            // Wert dieser Zeile uebernehmen.
+                            $wert   = $opVal;
+                            $quelle = 'B(orderProperties Zeile, ID aus Feld 81)';
+                            break;
                         }
-                    } catch (\Throwable $egal) {
-                        // Auch nicht lesbar -> Zeile liefert nichts.
                     }
+                } catch (\Throwable $egal) {
+                    // Nicht lesbar -> die Zeile liefert dann nur die ID.
                 }
 
                 if ($eigenschaftsId > 0) {
@@ -427,13 +454,52 @@ class OrderRenameListener
             }
 
             // -----------------------------------------------------------
-            // NEU v1.4.4 - QUELLE Z ("Zettel aus der Kunden-Sitzung"):
-            // Der BasketItemListener hat die Kundenwerte beim In-den-
-            // Warenkorb-Legen dort abgelegt. Diese Quelle ist FUEHREND
-            // und ueberschreibt alles Bisherige (am Auftrag selbst
-            // speichert Plenty die Werte nachweislich nicht).
+            // QUELLE Z ("Zettel aus der Kunden-Sitzung") - seit v1.5.13 nur
+            // noch RUECKFALL, nicht mehr fuehrend:
+            // Positionen, die bereits alle SECHS Werte direkt vom Warenkorb-
+            // Artikel erhalten haben (BasketToOrderListener -> Quelle B/C),
+            // werden GAR NICHT mehr ueber den Zettel gesucht. Damit entfaellt
+            // fuer sie der Preisvergleich komplett - kein Gleichpreis-Alarm
+            // und kein Zettel-Verbrauch, obwohl der Auftrag korrekt ist.
+            // Nur unvollstaendige Positionen versuchen noch den Legacy-Weg.
             // -----------------------------------------------------------
-            $this->uebernehmeZettelWerte($hauptPositionen, $werte);
+            // v1.5.13 (ENDGUELTIG): Der Session-Zettel wird zur Befuellung
+            // GAR NICHT MEHR benutzt - auch nicht als Rueckfall.
+            //
+            // Grund: Der Preis ist KEIN Identitaetsbeweis. Selbst eine
+            // scheinbar eindeutige Lage kann falsch sein. Beispiel mit zwei
+            // gleich teuren Baendern (28,96 EUR):
+            //   Position A bekommt direkt 6/6  -> faellt aus der Suche raus,
+            //                                     ihr Zettel bleibt aber liegen
+            //   Position B bekommt direkt 0/6  -> waere die einzige "offene"
+            //   -> 1 offene Position + 1 preislich passender Zettel (der von A!)
+            //   -> B bekaeme FREMDE Werte, saehe vollstaendig aus, Guard "OK".
+            //
+            // Deshalb gilt jetzt hart:
+            //   direkter Weg (BasketToOrderListener) = 6/6 -> verwenden
+            //   direkter Weg < 6/6 -> Position bleibt BEWUSST unvollstaendig
+            //                         und wird gemeldet (lieber sichtbar
+            //                         unvollstaendig als unsichtbar falsch).
+            // Der BasketItemListener schreibt den Zettel weiterhin, aber nur
+            // noch zu Diagnosezwecken - hier wird daraus NICHTS uebernommen.
+            $unvollstaendig = 0;
+            foreach ($hauptPositionen as $hId => $pos) {
+                $wVorhanden = isset($werte[$hId]) ? $werte[$hId] : [];
+                if (!$this->hatAlleSechsWerte($config, $wVorhanden)) {
+                    $unvollstaendig++;
+                }
+            }
+            if ($unvollstaendig > 0) {
+                $this->wichtig('[MIRKA-PROBLEM] ' . $unvollstaendig
+                    . ' Konfigurator-Position(en) haben ueber den direkten Weg '
+                    . '(Warenkorb -> Auftrag) NICHT alle sechs Werte erhalten. '
+                    . 'Es wird BEWUSST NICHT aus dem Session-Zettel rekonstruiert '
+                    . '(der Preis ist kein Identitaetsbeweis). Die Position bleibt '
+                    . 'unvollstaendig und wird gemeldet.');
+            } else {
+                $this->diag('[DIAG][Rename] Alle Konfigurator-Positionen haben '
+                    . '6/6 direkte Werte - Session-Zettel wird nicht benoetigt.');
+            }
 
             // -----------------------------------------------------------
             // NEU v1.5.3: SERVERSEITIGER GUARD (Vollstaendigkeits-Pruefung).
@@ -842,233 +908,43 @@ class OrderRenameListener
         }
     }
 
-    private function uebernehmeZettelWerte($hauptPositionen, &$werte)
-    {
-        try {
-            /** @var FrontendSessionStorageFactoryContract $sessionFactory */
-            $sessionFactory = pluginApp(FrontendSessionStorageFactoryContract::class);
-            $ablage = $sessionFactory->getPlugin();
 
-            $roh   = (string) $ablage->getValue('mirkaKonfigListe');
-            $liste = ($roh !== '') ? json_decode($roh, true) : [];
-            if (!is_array($liste) || count($liste) === 0) {
-                $this->diag('[DIAG][Rename] Kein Zettel in der Sitzung gefunden - '
-                    . 'Namen bleiben ggf. unveraendert (fail-safe).');
-                return;
-            }
 
-            $hauptIds = array_keys($hauptPositionen);
-            sort($hauptIds);
-
-            $benutzteIndizes = [];
-
-            // NEU v1.5.12 (SICHERHEIT): Vorab zaehlen, wie viele
-            // Hauptpositionen JEWEILS denselben Bruttopreis haben.
-            // Grund: v1.5.11 pruefte nur die Zettel-Seite. Bei
-            //   Position A = 100,00 | Position B = 100,00 | nur EIN Zettel
-            // bekam Position A den Zettel - obwohl niemand weiss, ob er
-            // dorthin gehoert. Position A haette FREMDE 6/6-Werte
-            // bekommen und waere falsch umbenannt worden.
-            // Jetzt gilt: Zuordnung nur, wenn der Preis auf BEIDEN
-            // Seiten eindeutig ist (genau 1 Position UND genau 1 Zettel).
-            $preisAnzahlPositionen = [];
-            foreach ($hauptIds as $zaehlId) {
-                $zaehlPreis = $this->leseBruttoEinzelpreis($hauptPositionen[$zaehlId]);
-                if ($zaehlPreis !== null) {
-                    // Preis als Schluessel mit 2 Nachkommastellen (Cent-genau).
-                    $schluessel = (string) round((float) $zaehlPreis, 2);
-                    if (!isset($preisAnzahlPositionen[$schluessel])) {
-                        $preisAnzahlPositionen[$schluessel] = 0;
-                    }
-                    $preisAnzahlPositionen[$schluessel]++;
-                }
-            }
-
-            foreach ($hauptIds as $hauptId) {
-                $position = $hauptPositionen[$hauptId];
-                $posPreis = $this->leseBruttoEinzelpreis($position);
-
-                $gewaehlterIndex = -1;
-
-                if ($posPreis !== null) {
-                    // NEU v1.5.12: ZUERST die Positions-Seite pruefen.
-                    // Haben MEHRERE Auftragspositionen denselben Preis, ist
-                    // eine preisbasierte Zuordnung grundsaetzlich nicht
-                    // beweisbar - dann bekommt KEINE dieser Positionen einen
-                    // Zettel (nicht erst die zweite). Sonst koennte die erste
-                    // Position fremde Werte erhalten und falsch umbenannt
-                    // werden, waehrend der Auftrag nur teilweise auffaellt.
-                    $preisSchluessel = (string) round((float) $posPreis, 2);
-                    $anzahlPositionenMitPreis = isset($preisAnzahlPositionen[$preisSchluessel])
-                        ? $preisAnzahlPositionen[$preisSchluessel] : 0;
-                    if ($anzahlPositionenMitPreis > 1) {
-                        $this->wichtig('[MIRKA-PROBLEM] Zettel-Zuordnung mehrdeutig'
-                            . ' | Hauptposition=' . (int) $hauptId
-                            . ' | Positionspreis=' . $posPreis
-                            . ' | HauptpositionenMitDiesemPreis=' . $anzahlPositionenMitPreis
-                            . ' | Es wurden KEINE Werte uebernommen'
-                            . ' (fail-safe: bei gleichem Preis ist nicht beweisbar,'
-                            . ' welcher Zettel zu welcher Position gehoert).');
-                        continue;
-                    }
-
-                    // NEU v1.5.11 (SICHERHEIT): Frueher wurde vom neuesten
-                    // Zettel rueckwaerts der ERSTE passende genommen und
-                    // die Suche abgebrochen. Haben zwei verschiedene
-                    // Konfigurationen zufaellig denselben Bruttopreis, war
-                    // die Zuordnung nicht eindeutig - die Baender konnten
-                    // VERTAUSCHT werden. Beide Positionen haetten danach
-                    // 6/6 Werte gehabt, der Guard haette "OK" gemeldet und
-                    // es waere das falsche Band gefertigt worden.
-                    // Jetzt werden ALLE passenden Zettel gezaehlt:
-                    //   0 Treffer  -> wie bisher: Problem, uebersprungen
-                    //   1 Treffer  -> eindeutig, wird verwendet
-                    //  >1 Treffer  -> MEHRDEUTIG: KEINEN verwenden, melden.
-                    //                 Die Position bleibt unvollstaendig,
-                    //                 der 6/6-Guard schlaegt an. Lieber ein
-                    //                 Auftrag zur Pruefung als ein falsch
-                    //                 zugeordnetes Schleifband.
-                    // Bewusst KEINE Reihenfolgen-Heuristik ("aeltester zu
-                    // aeltestem") - die waere geraten, nicht belegt.
-                    $treffer = [];
-                    for ($i = count($liste) - 1; $i >= 0; $i--) {
-                        if (isset($benutzteIndizes[$i])) {
-                            continue;
-                        }
-                        $zettelPreis = isset($liste[$i]['preis'])
-                            ? (float) $liste[$i]['preis'] : null;
-                        if ($zettelPreis !== null) {
-                            // Preis-Abstand OHNE die abs-Funktion berechnen, denn diese
-                            // ist in der Plenty-Sandbox verboten (Deploy-Fehler
-                            // 06.07.2026). Gleiche Mathematik: Differenz bilden
-                            // und bei negativem Ergebnis das Vorzeichen drehen.
-                            $differenz = $zettelPreis - $posPreis;
-                            if ($differenz < 0) {
-                                $differenz = -$differenz;
-                            }
-                            if ($differenz < 0.005) {
-                                $treffer[] = $i;   // sammeln, NICHT abbrechen
-                            }
-                        }
-                    }
-
-                    if (count($treffer) === 1) {
-                        $gewaehlterIndex = $treffer[0];
-                    } elseif (count($treffer) > 1) {
-                        $this->wichtig('[MIRKA-PROBLEM] Zettel-Zuordnung mehrdeutig'
-                            . ' | Hauptposition=' . (int) $hauptId
-                            . ' | Positionspreis=' . $posPreis
-                            . ' | passende Session-Zettel=' . count($treffer)
-                            . ' | Es wurden KEINE Werte uebernommen'
-                            . ' (fail-safe, sonst koennten die Baender vertauscht werden).');
-                        continue;
-                    }
-
-                    if ($gewaehlterIndex < 0) {
-                        $this->wichtig('[MIRKA-PROBLEM] Kein Zettel passt zum '
-                            . 'Positionspreis ' . $posPreis . ' (Haupt ' . (int) $hauptId
-                            . ') - Position wird uebersprungen (fail-safe).');
-                        continue;
-                    }
-                } else {
-                    // Preis NICHT lesbar: nur den voellig eindeutigen
-                    // Fall zulassen (1 Position, 1 Zettel).
-                    if (count($hauptIds) === 1 && count($liste) === 1) {
-                        $gewaehlterIndex = 0;
-                        $this->diag('[DIAG][Rename] Positionspreis nicht lesbar - '
-                            . 'eindeutiger Fall (1 Position, 1 Zettel), Zettel wird verwendet.');
-                    } else {
-                        $this->wichtig('[MIRKA-PROBLEM] ⚠️ Positionspreis nicht lesbar und '
-                            . 'Lage mehrdeutig (' . count($hauptIds) . ' Position(en), '
-                            . count($liste) . ' Zettel) - uebersprungen (fail-safe).');
-                        continue;
-                    }
-                }
-
-                $benutzteIndizes[$gewaehlterIndex] = true;
-                $eintrag  = $liste[$gewaehlterIndex];
-                $werteMap = (isset($eintrag['werte']) && is_array($eintrag['werte']))
-                    ? $eintrag['werte']
-                    : [];
-                foreach ($werteMap as $propertyId => $wert) {
-                    $pid  = (int) $propertyId;
-                    $wneu = trim((string) $wert);
-                    // NEU v1.5.13 (Blocker-Fix): Direkte Auftragsdaten
-                    // (BasketToOrderListener -> Quelle C) sind FUEHREND.
-                    // Der Session-Zettel darf einen bereits vorhandenen,
-                    // NICHT-leeren Wert niemals ueberschreiben - er ergaenzt
-                    // nur noch fehlende/leere Werte (Legacy-Fallback). Damit
-                    // kann ein alter, gleich teurer Zettel die korrekten
-                    // direkten Werte nicht mehr verfaelschen.
-                    $nochLeer = !isset($werte[$hauptId][$pid])
-                        || trim((string) $werte[$hauptId][$pid]) === '';
-                    if ($pid > 0 && $nochLeer) {
-                        $werte[$hauptId][$pid] = $wneu;
-                    }
-                }
-                $this->diag('[DIAG][Rename] Werte uebernommen (Z(Sitzungs-Zettel)): '
-                    . count($werteMap) . ' Wert(e) fuer Haupt ' . (int) $hauptId
-                    . ' (Zettel-Preis: '
-                    . (isset($eintrag['preis']) ? $eintrag['preis'] : '?')
-                    . ', Positionspreis: ' . ($posPreis !== null ? $posPreis : 'nicht lesbar')
-                    . ')');
-            }
-
-            // Nur die tatsaechlich verbrauchten Zettel entfernen.
-            if (count($benutzteIndizes) > 0) {
-                $rest = [];
-                foreach ($liste as $i => $eintrag) {
-                    if (!isset($benutzteIndizes[$i])) {
-                        $rest[] = $eintrag;
-                    }
-                }
-                $ablage->setValue('mirkaKonfigListe', count($rest) > 0 ? json_encode($rest) : '');
-            }
-        } catch (\Throwable $fehler) {
-            $this->wichtig('[MIRKA-PROBLEM] Zettel-Lesen fehlgeschlagen: '
-                . $fehler->getMessage());
-        }
-    }
 
     /**
-     * NEU v1.4.5: Liest den Brutto-Einzelpreis einer Auftragsposition.
-     * Versucht nacheinander die beiden ueblichen Feldnamen der
-     * Betrags-Zeilen (fest benannte Zugriffe, sandbox-konform).
-     * Liefert null, wenn nichts lesbar ist - dann greift die
-     * Eindeutigkeits-Regel in uebernehmeZettelWerte().
+     * NEU v1.5.13: Prueft, ob fuer eine Position bereits ALLE SECHS
+     * Mirka-Werte (Qualitaet, Koernung, Verbindung, Breite, Laenge,
+     * Mirka-Nr.) nicht-leer vorliegen. Wird gebraucht, um zu entscheiden,
+     * ob der Session-Zettel ueberhaupt noch befragt werden muss.
      *
-     * @param mixed $position Auftragsposition
-     * @return float|null
+     * @param PluginConfig $config
+     * @param array        $w  eigenschaftsId => Wert (einer Position)
+     * @return bool
      */
-    private function leseBruttoEinzelpreis($position)
+    private function hatAlleSechsWerte($config, $w)
     {
-        // Versuch 1: amounts[0]->priceOriginalGross
-        try {
-            foreach ($position->amounts as $betrag) {
-                $wert = (float) $betrag->priceOriginalGross;
-                if ($wert > 0) {
-                    return $wert;
-                }
-                break;
-            }
-        } catch (\Throwable $egal) {
-            // weiter mit Versuch 2
+        if (!is_array($w)) {
+            return false;
         }
-        // Versuch 2: amounts[0]->priceGross
-        try {
-            foreach ($position->amounts as $betrag) {
-                $wert = (float) $betrag->priceGross;
-                if ($wert > 0) {
-                    return $wert;
-                }
-                break;
+        $ids = [
+            $config->getPropertyIdSchleifmittel(),
+            $config->getPropertyIdKoernung(),
+            $config->getPropertyIdVerbindung(),
+            $config->getPropertyIdBreite(),
+            $config->getPropertyIdLaenge(),
+            $config->getPropertyIdMirkaCode(),
+        ];
+        foreach ($ids as $id) {
+            $id = (int) $id;
+            if ($id <= 0) {
+                return false;
             }
-        } catch (\Throwable $egal) {
-            // nicht lesbar
+            if (!isset($w[$id]) || trim((string) $w[$id]) === '') {
+                return false;
+            }
         }
-        return null;
+        return true;
     }
-
 
     /**
      * Liest einen Wert aus dem Werte-Array (leerer Text, wenn nicht da).
