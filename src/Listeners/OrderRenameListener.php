@@ -9,7 +9,7 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.5.16)
+ * OrderRenameListener (v1.5.17)
  *
  * ---------------------------------------------------------------------
  * KORREKTUR v1.5.15 (08.09.2026) - RUECKFALL WIEDERHERGESTELLT
@@ -958,10 +958,27 @@ class OrderRenameListener
 
             $roh   = (string) $ablage->getValue('mirkaKonfigListe');
             $liste = ($roh !== '') ? json_decode($roh, true) : [];
+
+            // NEU v1.5.17: Beweis-Zeile zur Sitzung. Bei Auftrag 329694 war
+            // der Zettel um 13:42:16 geschrieben und um 13:42:52 nicht mehr
+            // lesbar - OHNE dass sich der Kunde ab-/angemeldet hatte. Diese
+            // Zeile trennt die moeglichen Ursachen sauber:
+            //   Ablage erreichbar + Laenge 0  -> Sitzung ist eine ANDERE
+            //                                    (oder der Wert wurde geleert)
+            //   Ablage NICHT erreichbar       -> beim Auftrag-Anlegen gibt es
+            //                                    ueberhaupt keine Kundensitzung
+            $this->wichtig('[MIRKA-SESSION] Beim Auftrag-Anlegen: Sitzungsablage'
+                . ' erreichbar=ja | Zettel-Rohwert Laenge=' . strlen($roh)
+                . ' | Eintraege=' . (is_array($liste) ? count($liste) : 0)
+                . ' | Kontrollwert mirkaSitzungsMarke="'
+                . (string) $ablage->getValue('mirkaSitzungsMarke') . '"');
+
             if (!is_array($liste) || count($liste) === 0) {
-                $this->diag('[DIAG][Rename] Kein Zettel in der Sitzung gefunden - '
-                    . 'Rueckfall entfaellt (z. B. weil sich der Kunde zwischendurch '
-                    . 'an- oder abgemeldet hat; dann ist die Sitzung eine andere).');
+                $this->wichtig('[MIRKA-PROBLEM] Kein Zettel in der Sitzung - der '
+                    . 'Rueckfall kann nichts liefern. Der Zettel wird beim '
+                    . 'In-den-Warenkorb-Legen geschrieben; ist er beim '
+                    . 'Auftrag-Anlegen weg, ist die Sitzung dort eine andere. '
+                    . 'Siehe [MIRKA-SESSION]-Zeile davor.');
                 return;
             }
 
