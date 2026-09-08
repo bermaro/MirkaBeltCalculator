@@ -7,6 +7,7 @@ use Plenty\Plugin\Log\Loggable;
 use Plenty\Plugin\Events\Dispatcher;
 use Plenty\Modules\Basket\Events\BasketItem\AfterBasketItemAdd;
 use Plenty\Modules\Order\Events\OrderCreated;
+use Plenty\Modules\Webshop\Events\AfterBasketItemToOrderItem;
 
 /**
  * MirkaBeltCalculatorServiceProvider (v1.4.7)
@@ -88,8 +89,20 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
             'MirkaBeltCalculator\\Listeners\\OrderPriceGuardListener@handle'
         );
 
+        // 4) NEU v1.6.0 - STUFE A: REINE MESSUNG basketItemId -> orderItemId.
+        //    Dieser Listener aendert NICHTS. Er ist mehrfach abgesichert:
+        //      - Vorschau-Schutz als allererste Handlung (getIncompleteStatus)
+        //        -> die alte Ausloggen-Schleife kann nicht wieder entstehen,
+        //      - laeuft nur unter Debug (Tab 6) -> echte Kunden unberuehrt,
+        //      - nur unsere Variante, kein DB-/Schreibzugriff, eine Logzeile.
+        //    Siehe BasketToOrderMeasureListener (Klassenkopf) fuer Details.
+        $eventDispatcher->listen(
+            AfterBasketItemToOrderItem::class,
+            'MirkaBeltCalculator\\Listeners\\BasketToOrderMeasureListener@handle'
+        );
+
         // -----------------------------------------------------------
-        // 4) + 5) ABGESCHALTET in v1.5.24 (08.09.2026) - WICHTIG
+        // (alt 4) + 5) WEITERHIN ABGESCHALTET seit v1.5.24 - WICHTIG
         // -----------------------------------------------------------
         //   Die beiden Ereignisse BeforeBasketItemToOrderItem und
         //   AfterBasketItemToOrderItem sind hier NICHT MEHR registriert.
