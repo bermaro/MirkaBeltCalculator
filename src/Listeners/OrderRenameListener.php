@@ -27,7 +27,8 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *   Zusaetzlich zur Umbenennung prueft dieser Listener jetzt, ob JEDE
  *   Konfigurator-Position alle sechs Eigenschaften traegt (Qualitaet,
  *   Koernung, Verbindung, Breite, Laenge, Mirka-Nr). Datenbasis sind die
- *   bereits zusammengefuehrten Werte (inkl. Session-Zettel) - NICHT ein
+ *   bereits zusammengefuehrten Werte aus den Auftrags-Quellen A/B/C
+ *   (seit v1.5.13 OHNE Session-Zettel) - NICHT ein
  *   separater, schwaecherer Parser. Fehlt ein Wert, wird der Auftrag laut
  *   gemeldet (Methode fuehreGuardAus, Modus aus Tab 8). Der Guard laeuft
  *   bei OrderCreated und verhindert die Bestellung NICHT (das ist zu
@@ -422,7 +423,7 @@ class OrderRenameListener
                     ];
                     $this->diag('[DIAG][Rename] Zeile erkannt (' . $quelle . '): '
                         . 'Eigenschaft ' . $eigenschaftsId
-                        . ($wert !== '' ? ' = "' . $wert . '"' : ' (Wert folgt vom Zettel)')
+                        . ($wert !== '' ? ' = "' . $wert . '"' : ' (Wert an dieser Zeile leer)')
                         . ' (Zeile ' . (int) $zeile->id . ' -> Haupt ' . $hauptId . ')');
                 }
             }
@@ -778,45 +779,6 @@ class OrderRenameListener
     }
 
     /**
-     * v1.4.4/v1.4.5: Liest den "Zettel" des BasketItemListeners aus der
-     * Kunden-Sitzung und traegt die Kundenwerte in die Werte-Sammlung
-     * ein (fuehrende Quelle Z).
-     *
-     * NEU v1.4.5 - ZUORDNUNG MIT PREIS-GEGENCHECK:
-     * Jeder Zettel traegt den Brutto-Verkaufspreis seiner Konfiguration.
-     * Ein Zettel wird einer Auftragsposition nur zugeordnet, wenn sein
-     * Preis zum Brutto-Einzelpreis der Position passt (Toleranz 0,005
-     * EUR), gesucht wird vom NEUESTEN Zettel rueckwaerts. So bekommt
-     * z. B. nach "A rein, B rein, B geloescht, A bestellt" die Position
-     * A trotzdem den richtigen Zettel A (der Zettel von B passt nicht
-     * zum Preis von A - ausser beide kosten exakt gleich viel, dann
-     * waere auch die Konfiguration praktisch identisch teuer; dieses
-     * Restrisiko ist dokumentiert und akzeptiert).
-     * Ist der Positionspreis nicht lesbar, wird NUR der voellig
-     * eindeutige Fall zugelassen: genau 1 Position UND genau 1 Zettel.
-     * Fail-safe in jedem Zweifelsfall: Name bleibt unveraendert.
-     *
-     * @param array $hauptPositionen  hauptId => Position
-     * @param array $werte            (per Referenz) hauptId => [propId => Wert]
-     */
-    /**
-     * NEU v1.5.3: SERVERSEITIGER GUARD.
-     * Meldet jede Konfigurator-Position, bei der nicht alle sechs
-     * Eigenschaften vorliegen (Datenbasis: die im Umbenenner bereits
-     * zusammengefuehrten Werte inkl. Session-Zettel). Verhindert nichts
-     * (OrderCreated laeuft nach dem Anlegen), sondern macht den Fehler
-     * SICHTBAR, damit der Auftrag nicht unbemerkt weiterlaeuft.
-     *
-     * Modus kommt aus Tab 8 (getFailClosedMode, wie beim Preis-Guard):
-     *   off = nichts tun
-     *   log = nur laut melden (Standard, sicher)
-     *   on  = zusaetzlich Sperr-Status setzen (falls in Tab 8 hinterlegt)
-     *
-     * @param PluginConfig $config
-     * @param int          $auftragsId
-     * @param array        $guardProbleme  Liste verdaechtiger Positionen
-     */
-    /**
      * NEU v1.5.4: Schreibt EINE Sammelzeile pro Auftrag, in der alles
      * Wichtige direkt im Nachrichtentext steht - also in der Log-Liste
      * (Spalte "Nachricht") sofort lesbar, ohne etwas aufklappen zu
@@ -866,6 +828,24 @@ class OrderRenameListener
         }
     }
 
+    /**
+     * NEU v1.5.3: SERVERSEITIGER GUARD.
+     * Meldet jede Konfigurator-Position, bei der nicht alle sechs
+     * Eigenschaften vorliegen (Datenbasis: die im Umbenenner bereits
+     * zusammengefuehrten Werte aus den Auftrags-Quellen A/B/C - der
+     * Session-Zettel wird seit v1.5.13 NICHT mehr befragt). Verhindert nichts
+     * (OrderCreated laeuft nach dem Anlegen), sondern macht den Fehler
+     * SICHTBAR, damit der Auftrag nicht unbemerkt weiterlaeuft.
+     *
+     * Modus kommt aus Tab 8 (getFailClosedMode, wie beim Preis-Guard):
+     *   off = nichts tun
+     *   log = nur laut melden (Standard, sicher)
+     *   on  = zusaetzlich Sperr-Status setzen (falls in Tab 8 hinterlegt)
+     *
+     * @param PluginConfig $config
+     * @param int          $auftragsId
+     * @param array        $guardProbleme  Liste verdaechtiger Positionen
+     */
     private function fuehreGuardAus($config, $auftragsId, $guardProbleme)
     {
         try {
