@@ -7,7 +7,7 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * BasketToOrderMeasureListener (NEU v1.6.0 - "STUFE A: reine Messung")
+ * BasketToOrderMeasureListener (v1.6.1 - "STUFE A: reine Messung")
  *
  * ---------------------------------------------------------------------
  * ZWECK (Arbeitsanweisung Stufe A):
@@ -17,55 +17,45 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *
  *   Er aendert NICHTS am Auftrag, am Warenkorb, am Preis oder an einer
  *   Eigenschaft. Er schreibt KEINE Datenbank. Er ruft KEIN updateBasketItem
- *   und KEIN updateOrder auf. Er loggt nur.
+ *   und KEIN updateOrder auf. Er loggt nur - rein lesend.
  *
- *   Erst wenn dieser Test eindeutig ist (basketItemId 456 -> orderItemId 789),
- *   folgt Stufe B (dauerhafter Datensatz) und Stufe C (Werte an die Position
- *   schreiben). Vorher wird NICHTS gebaut.
- *
- * ---------------------------------------------------------------------
- * WARUM DAS SICHER IST (die Ausloggen-Schleife von frueher kann NICHT
- * wieder passieren):
- *
- *   1) VORSCHAU-SCHUTZ ZUERST. Das Event AfterBasketItemToOrderItem feuert
- *      im Checkout auch bei jeder Auftrags-VORSCHAU - frueher dutzendfach in
- *      Sekunden. Genau das hat die Schleife ausgeloest, weil die alten
- *      Listener bei JEDEM dieser Fires schwere Arbeit gemacht haben
- *      (findOneById, JSON-Umwandlung, mehrere Logzeilen).
- *      Hier ist die ALLERERSTE Zeile: ist es eine Vorschau
- *      (getIncompleteStatus === true), kehren wir SOFORT zurueck - ohne
- *      jeden weiteren Zugriff.
- *
- *   2) NUR UNTER DEBUG. Selbst beim echten Uebergang laeuft die Messung nur,
- *      wenn Tab 6 (Debug) AN ist. Im Normalbetrieb (Debug AUS) kehrt der
- *      Listener sofort zurueck und ruehrt gar nichts an - echte Kunden sind
- *      damit unberuehrt. Zum Messen: Debug an, EINE Testbestellung, Debug
- *      wieder aus.
- *
- *   3) NUR UNSERE VARIANTE. Fremdartikel werden sofort verlassen.
- *
- *   4) KEIN DATENBANK-/SCHREIBZUGRIFF. Es werden ausschliesslich die Felder
- *      gelesen, die das Event ohnehin schon mitbringt. Danach genau eine
- *      Messzeile.
+ *   Erst wenn dieser Test eindeutig ist, folgt Stufe B (dauerhafter
+ *   Datensatz) und Stufe C (Werte an die Position schreiben). Vorher wird
+ *   NICHTS gebaut. Es wird auch NICHTS angenommen: ob an dieser Stelle
+ *   ueberhaupt schon eine orderItemId existiert und ob eine eindeutige
+ *   Bruecke Warenkorbposition -> Auftragsposition da ist, muss die Messung
+ *   ZEIGEN. Kein Preis-, kein Reihenfolge-Rueckfall.
  *
  * ---------------------------------------------------------------------
- * PLENTY-SANDBOX (hart erarbeitete Regeln, gelten weiter):
- *   - Dynamische Property-Namen ($obj->$name) sind VERBOTEN. Deshalb wird
- *     jeder Eventwert zuerst ueber json_encode()/json_decode() in ein
- *     normales Array umgewandelt (alsFelder). Plenty-Modelle geben ihre
- *     echten Felder nur so heraus, nicht ueber isset($obj->feld)/foreach.
+ * REIHENFOLGE IM HANDLER (bewusst so, damit echte Kunden unberuehrt sind
+ * und die alte Ausloggen-Schleife nicht wiederkommen kann):
+ *
+ *   1) VORSCHAU-SCHUTZ, FAIL-SAFE, als allererste Handlung.
+ *      Das Event feuert im Checkout auch bei jeder Auftrags-VORSCHAU -
+ *      frueher dutzendfach in Sekunden; genau das hat die Schleife
+ *      ausgeloest. Deshalb: Nur wenn getIncompleteStatus() ZWEIFELSFREI
+ *      "false" (= kein Preview) liefert, geht es weiter. Liefert es "true"
+ *      (Preview), etwas Unerwartetes ODER wirft es eine Ausnahme -> SOFORT
+ *      zurueck, ohne jeden weiteren Zugriff. Im Zweifel: nichts tun.
+ *
+ *   2) NUR UNTER DEBUG. Direkt danach - VOR jedem Zugriff auf die
+ *      Event-Daten - wird Tab 6 (Debug) geprueft. Ist Debug AUS, kehrt der
+ *      Listener sofort zurueck und liest nicht einmal das BasketItem.
+ *      Im Normalbetrieb (Debug AUS) ist er damit praktisch inaktiv - echte
+ *      Kunden sind unberuehrt. Zum Messen: Debug an, EINE Testbestellung,
+ *      Debug wieder aus.
+ *
+ *   3) ERST JETZT Event-Daten lesen/umwandeln und auf unsere Variante
+ *      pruefen. Danach genau EINE Messzeile.
+ *
+ * ---------------------------------------------------------------------
+ * PLENTY-SANDBOX (gilt weiter):
+ *   - Dynamische Property-Namen ($obj->$name) sind VERBOTEN. Jeder
+ *     Eventwert wird zuerst ueber json_encode()/json_decode() in ein
+ *     normales Array umgewandelt (alsFelder). Auf dem Array ist der Zugriff
+ *     mit Variablen-Schluessel ($arr[$name]) erlaubt.
  *   - getBasketItem()/getOrderItem() liefern laut Doku ein Array; der
  *     json-Weg funktioniert aber auch, falls es doch ein Modell ist.
- *
- * ---------------------------------------------------------------------
- * WAS DIE MESSZEILE ZEIGT UND WARUM:
- *   basketItemId : die Warenkorb-Positions-ID (technische Identitaet vorher)
- *   orderItemId  : die Auftrags-Positions-ID (technische Identitaet nachher)
- *   Felder       : ALLE verfuegbaren Feldnamen der Auftragsposition - damit
- *                  sehen wir, OB an dieser Stelle ueberhaupt schon eine
- *                  orderItemId existiert (der Auftrag ist hier evtl. noch
- *                  nicht final gespeichert). Genau das muss die Messung
- *                  klaeren - es wird NICHTS angenommen.
  * ---------------------------------------------------------------------
  */
 class BasketToOrderMeasureListener
@@ -78,52 +68,49 @@ class BasketToOrderMeasureListener
     /**
      * Eindeutige Build-Kennung. MUSS im Plenty-Log erscheinen, BEVOR ein
      * Testergebnis ausgewertet wird - sonst laeuft noch alter Code (der
-     * Git-/Webhook-404 hat genau das mehrfach verursacht).
+     * Git-/Webhook-404 hat genau das mehrfach verursacht). Die Nummer
+     * ZWINGT Plenty NICHT zum Neuladen; sie beweist nur, welcher Code laeuft.
      */
-    const BUILD = 'Version 1.6.0 | Stufe A (Messung basketItemId->orderItemId)';
+    const BUILD = 'Version 1.6.1 | Stufe A (Messung basketItemId->orderItemId)';
 
     public function handle(AfterBasketItemToOrderItem $event)
     {
+        // -----------------------------------------------------------------
+        // 1) VORSCHAU-SCHUTZ - FAIL-SAFE. Allererste Handlung, ohne jeden
+        //    weiteren Zugriff. Nur bei zweifelsfrei "false" geht es weiter.
+        // -----------------------------------------------------------------
+        try {
+            if ($event->getIncompleteStatus() !== false) {
+                return; // Vorschau ODER unerwarteter Wert -> nichts tun.
+            }
+        } catch (\Throwable $egal) {
+            return; // Status nicht sicher lesbar -> nichts tun (fail-safe).
+        }
+
         try {
             // -------------------------------------------------------------
-            // 1) VORSCHAU-SCHUTZ - die allererste Handlung, ohne jeden
-            //    weiteren Zugriff. Verhindert die alte Ausloggen-Schleife.
+            // 2) NUR unter Debug (Tab 6). Config VOR jedem Event-Zugriff.
+            //    Bei Debug AUS ruehrt der Listener gar nichts an.
             // -------------------------------------------------------------
-            try {
-                if ($event->getIncompleteStatus() === true) {
-                    return; // reine Vorschau -> nichts tun.
-                }
-            } catch (\Throwable $egal) {
-                // Sollte die Methode wider Erwarten fehlen: NICHT abbrechen,
-                // aber es bleibt bei genau einer Logzeile ohne DB-Zugriff.
+            /** @var PluginConfig $config */
+            $config = pluginApp(PluginConfig::class);
+            if (!$config->isDebugMode()) {
+                return;
             }
 
-            $basketItem = $event->getBasketItem();
-            $orderItem  = $event->getOrderItem();
-
-            // In normale Arrays umwandeln (Sandbox-sicher, siehe Klassenkopf).
-            $biFelder = $this->alsFelder($basketItem);
-            $oiFelder = $this->alsFelder($orderItem);
-
             // -------------------------------------------------------------
-            // 2) Nur unsere Konfigurator-Variante behandeln.
+            // 3) Erst jetzt die Event-Daten lesen und umwandeln.
             // -------------------------------------------------------------
+            $biFelder = $this->alsFelder($event->getBasketItem());
+            $oiFelder = $this->alsFelder($event->getOrderItem());
+
+            // Nur unsere Konfigurator-Variante behandeln.
             $variationId = (int) $this->lese($biFelder, 'variationId');
             if ($variationId === 0) {
                 $variationId = (int) $this->lese($oiFelder, 'itemVariationId');
             }
-
-            /** @var PluginConfig $config */
-            $config = pluginApp(PluginConfig::class);
             if (!$config->isHandledVariation($variationId)) {
                 return; // Fremdartikel -> still.
-            }
-
-            // -------------------------------------------------------------
-            // 3) NUR unter Debug (Tab 6) messen. Schuetzt echte Kunden.
-            // -------------------------------------------------------------
-            if (!$config->isDebugMode()) {
-                return;
             }
 
             // -------------------------------------------------------------
@@ -135,18 +122,28 @@ class BasketToOrderMeasureListener
             );
 
             // -------------------------------------------------------------
-            // 5) DIE MESSUNG. Rein lesend, eine Zeile.
+            // 5) DIE MESSUNG. Rein lesend, eine Zeile, menschenlesbar.
+            //    Ziel: auch wenn orderItemId hier noch leer ist, genug
+            //    Felder sehen, um die naechste Bruecke festzulegen.
             // -------------------------------------------------------------
-            $basketItemId = $this->lese($biFelder, 'id');
-            $orderItemId  = $this->lese($oiFelder, 'id');
-
             $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-STUFE-A] BASKET->ORDER (echter Uebergang)'
-                . ' | variationId=' . $variationId
-                . ' | basketItemId=' . $this->text($basketItemId)
-                . ' | orderItemId=' . $this->text($orderItemId)
-                . ' | orderItem-Felder: ' . $this->schluessel($oiFelder)
-                . ' | basketItem-Felder: ' . $this->schluessel($biFelder)
+                . ' | WARENKORB:'
+                    . ' basketId=' . $this->text($this->lese($biFelder, 'basketId'))
+                    . ' basketItemId=' . $this->text($this->lese($biFelder, 'id'))
+                    . ' variationId=' . $this->text($this->lese($biFelder, 'variationId'))
+                    . ' quantity=' . $this->text($this->lese($biFelder, 'quantity'))
+                    . ' position=' . $this->text($this->lese($biFelder, 'position'))
+                . ' || AUFTRAG:'
+                    . ' orderId=' . $this->text($this->lese($oiFelder, 'orderId'))
+                    . ' orderItemId=' . $this->text($this->lese($oiFelder, 'id'))
+                    . ' itemVariationId=' . $this->text($this->lese($oiFelder, 'itemVariationId'))
+                    . ' quantity=' . $this->text($this->lese($oiFelder, 'quantity'))
+                    . ' position=' . $this->text($this->lese($oiFelder, 'position'))
+                    . ' orderItem.basketItemId=' . $this->text($this->lese($oiFelder, 'basketItemId'))
+                    . ' references=' . $this->kompakt($this->lese($oiFelder, 'references'))
+                . ' || WARENKORB-Felder: ' . $this->schluessel($biFelder)
+                . ' || AUFTRAG-Felder: ' . $this->schluessel($oiFelder)
             );
 
         } catch (\Throwable $t) {
@@ -212,7 +209,7 @@ class BasketToOrderMeasureListener
     private function text($w)
     {
         if ($w === null || $w === '') {
-            return '(leer/nicht vorhanden)';
+            return '(leer)';
         }
         if (is_string($w) || is_int($w) || is_float($w)) {
             return (string) $w;
@@ -221,6 +218,28 @@ class BasketToOrderMeasureListener
             return $w ? 'true' : 'false';
         }
         return '(komplex)';
+    }
+
+    /**
+     * Kompakte, gekuerzte Darstellung eines zusammengesetzten Feldes
+     * (z. B. references) fuers Log. Rein lesend.
+     *
+     * @param mixed $w
+     * @return string
+     */
+    private function kompakt($w)
+    {
+        if ($w === null || $w === '') {
+            return '(leer)';
+        }
+        $json = @json_encode($w);
+        if (!is_string($json)) {
+            return '(nicht darstellbar)';
+        }
+        if (strlen($json) > 300) {
+            $json = substr($json, 0, 300) . '...(gekuerzt)';
+        }
+        return $json;
     }
 
     /** Listet die vorhandenen Feldnamen auf (damit wir sehen, was da ist). */
