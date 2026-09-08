@@ -14,26 +14,41 @@ use MirkaBeltCalculator\Configs\PluginConfig;
  *   Am offiziellen Plenty-Ereignis BeforeBasketItemToOrderItem werden die
  *   sechs Kundenwerte (Qualitaet, Koernung, Verbindung, Breite, Laenge,
  *   Mirka-Nr.) DIREKT vom Warenkorb-Artikel an die entstehende Auftrags-
- *   position mitgegeben (addAdditionalVariationProperties). Damit entfaellt
- *   die Abhaengigkeit vom Sitzungs-Zettel und vom Preisvergleich.
+ *   position mitgegeben (addAdditionalVariationProperties).
  *
- *   Hintergrund: Bei externer Bezahlung (Google Pay / PayPal) entsteht der
- *   Auftrag in einer anderen Sitzung -> Sitzungs-Zettel weg -> alle Werte
- *   leer (real belegt: Auftrag 329670). Ausserdem blockierte die
- *   Gleichpreis-Sperre gleich teure Baender. Beides faellt hier weg.
+ *   BELEGT ist: Bei Auftrag 329670 waren die sechs Werte im Warenkorb
+ *   vollstaendig sichtbar und am erzeugten Auftrag leer - der Verlust
+ *   passiert also beim Uebergang Warenkorb -> Auftrag. Die genaue
+ *   Ursache dieses Verlusts (z. B. Sitzungswechsel bei externer
+ *   Bezahlung) ist damit NICHT bewiesen und wird hier bewusst nicht
+ *   behauptet.
  *
- * WICHTIG (Praezisierung nach externem Review):
- *   - Es werden AUSSCHLIESSLICH die sechs bekannten Mirka-Eigenschafts-IDs
- *     aus der PluginConfig uebertragen (64-69), keine beliebigen IDs.
- *   - Nur wenn ALLE SECHS Werte nicht-leer vorliegen, wird uebergeben und
- *     als "6/6" geloggt. Sonst wird NICHTS uebergeben und ein sichtbares
- *     [MIRKA-PROBLEM] geschrieben (kein halbfertiger Erfolg).
+ * WICHTIG - QUELLENAUSWAHL (v1.5.13, nach externem Review):
+ *   Es wird NICHT die erste nicht-leere Quelle genommen. Stattdessen
+ *   werden ALLE bekannten Felder des Warenkorb-Artikels geprueft und die
+ *   sechs erwarteten Werte aus nicht-leeren Eintraegen ZUSAMMENGEFUEHRT:
+ *       originOrderVariationProperties
+ *       basketItemOrderParams          (offiziell dokumentiert)
+ *       basketItemVariationProperties  (offiziell dokumentiert)
+ *   Liefern zwei Quellen fuer dieselbe Eigenschaft UNTERSCHIEDLICHE
+ *   nicht-leere Werte, wird NICHTS uebertragen und ein [MIRKA-PROBLEM]
+ *   gemeldet - es wird nicht geraten.
+ *
+ *   Es werden ausschliesslich die sechs in der PluginConfig hinterlegten
+ *   Eigenschafts-IDs akzeptiert, und nur bei vollstaendigen 6/6 wird
+ *   uebergeben.
+ *
+ * STATUS DER DATENFORM:
+ *   Plenty dokumentiert das Ereignis und die Methode, aber KEIN Schema
+ *   fuer $variationProperties. Die hier verwendete Form
+ *   [ ['propertyId' => 64, 'value' => '5C0'], ... ] ist deshalb bis zum
+ *   ersten echten Test ausdruecklich UNBEWIESEN (Teststatus).
  *
  * SICHERHEIT:
  *   - Alles in try/catch: ein Fehler hier darf den Kauf niemals stoeren.
- *   - Der alte Zettel-/Umbenenn-Weg bleibt als Rueckfall erhalten.
- *   - Der zusaetzliche AfterBasketToOrderDiagnoseListener protokolliert beim
- *     ersten Test, wo genau die Werte am OrderItem ankommen (nur lesen).
+ *   - Der Preis wird nicht angefasst.
+ *   - Der Session-Zettel wird vom OrderRenameListener seit v1.5.13 NICHT
+ *     mehr zur Befuellung benutzt (auch nicht als Rueckfall).
  */
 class BasketToOrderListener
 {
@@ -41,6 +56,13 @@ class BasketToOrderListener
 
     /** Feste Log-Kennung wie in den anderen Listenern. */
     const LOG_KENNUNG = 'MirkaBeltCalculator::MIRKA';
+
+    /** Alle Felder des Warenkorb-Artikels, die Eigenschaften tragen koennen. */
+    const QUELLEN = [
+        'originOrderVariationProperties',
+        'basketItemOrderParams',
+        'basketItemVariationProperties',
+    ];
 
     /**
      * Wird UNMITTELBAR bevor ein Warenkorb-Artikel zur Auftragsposition
@@ -63,45 +85,88 @@ class BasketToOrderListener
             }
 
             // ---- Die sechs erwarteten Eigenschafts-IDs aus der Config ----
-            // Reihenfolge: Qualitaet, Koernung, Verbindung, Breite, Laenge, Mirka-Nr.
-            $erwarteteIds = [
-                'Qualitaet'   => $config->getPropertyIdSchleifmittel(),
-                'Koernung'    => $config->getPropertyIdKoernung(),
-                'Verbindung'  => $config->getPropertyIdVerbindung(),
-                'Breite'      => $config->getPropertyIdBreite(),
-                'Laenge'      => $config->getPropertyIdLaenge(),
-                'MirkaNr'     => $config->getPropertyIdMirkaCode(),
+            $erwartet = [
+                'Qualitaet'  => (int) $config->getPropertyIdSchleifmittel(),
+                'Koernung'   => (int) $config->getPropertyIdKoernung(),
+                'Verbindung' => (int) $config->getPropertyIdVerbindung(),
+                'Breite'     => (int) $config->getPropertyIdBreite(),
+                'Laenge'     => (int) $config->getPropertyIdLaenge(),
+                'MirkaNr'    => (int) $config->getPropertyIdMirkaCode(),
             ];
+            // Umkehr-Zuordnung ID -> Klartext (nur diese IDs sind erlaubt).
+            $idZuLabel = [];
+            foreach ($erwartet as $label => $pid) {
+                if ($pid > 0) {
+                    $idZuLabel[$pid] = $label;
+                }
+            }
 
-            // ---- Alle vorhandenen Eigenschaften des Warenkorb-Artikels lesen ----
-            $eigenschaften = $this->leseEigenschaften($basketItem);
+            // ---- ALLE Quellen pruefen und nicht-leere Werte zusammenfuehren ----
+            $gefunden      = []; // propertyId => Wert
+            $herkunft      = []; // propertyId => Quellenname
+            $widersprueche = []; // Klartext-Meldungen
 
-            // In eine schnelle Map propertyId => Wert bringen.
-            $vorhanden = [];
-            if (is_array($eigenschaften)) {
-                foreach ($eigenschaften as $prop) {
+            foreach (self::QUELLEN as $quellenName) {
+                $liste = $this->leseFeld($basketItem, $quellenName);
+                if (!is_array($liste)) {
+                    continue;
+                }
+                foreach ($liste as $prop) {
                     $pid = (int) $this->getPropertyId($prop);
                     $val = trim((string) $this->getValue($prop));
-                    if ($pid > 0) {
-                        $vorhanden[$pid] = $val;
+                    if ($pid <= 0 || $val === '') {
+                        continue; // leere Eintraege ignorieren
+                    }
+                    if (!isset($idZuLabel[$pid])) {
+                        continue; // fremde Eigenschaft -> nie uebertragen
+                    }
+                    if (!isset($gefunden[$pid])) {
+                        $gefunden[$pid] = $val;
+                        $herkunft[$pid] = $quellenName;
+                    } elseif ($gefunden[$pid] !== $val) {
+                        // Zwei Quellen, zwei verschiedene Werte -> nicht raten.
+                        $widersprueche[] = $idZuLabel[$pid] . ' (ID ' . $pid . '): "'
+                            . $gefunden[$pid] . '" aus ' . $herkunft[$pid]
+                            . ' vs. "' . $val . '" aus ' . $quellenName;
                     }
                 }
             }
 
-            // ---- Nur die sechs bekannten IDs uebernehmen + Vollstaendigkeit pruefen ----
-            $zuUebergeben = [];
+            // ---- Fehlende bestimmen ----
             $fehlende     = [];
-            foreach ($erwarteteIds as $label => $pid) {
-                $pid = (int) $pid;
-                $wert = isset($vorhanden[$pid]) ? $vorhanden[$pid] : '';
-                if ($pid > 0 && $wert !== '') {
+            $zuUebergeben = [];
+            $herkunftText = [];
+            foreach ($erwartet as $label => $pid) {
+                if ($pid > 0 && isset($gefunden[$pid])) {
                     $zuUebergeben[] = [
                         'propertyId' => $pid,
-                        'value'      => $wert,
+                        'value'      => $gefunden[$pid],
                     ];
+                    $herkunftText[] = $label . '<-' . $herkunft[$pid];
                 } else {
-                    $fehlende[] = $label;
+                    $fehlende[]     = $label;
+                    $herkunftText[] = $label . '<-FEHLT';
                 }
+            }
+
+            // ---- DIAGNOSE VOR der Uebergabe (erste Haelfte des Tests) ----
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-DIAG] VOR BASKET->ORDER'
+                . ' | variationId=' . $variationId
+                . ' | gefunden=' . (6 - count($fehlende)) . '/6'
+                . ' | Herkunft: ' . implode(' ', $herkunftText)
+                . ' | erwartete IDs=' . implode(',', $erwartet)
+            );
+
+            // ---- Widerspruch zwischen Quellen -> NICHTS uebertragen ----
+            if (count($widersprueche) > 0) {
+                $this->getLogger(self::LOG_KENNUNG)->error(
+                    '[MIRKA-PROBLEM] Widerspruechliche Basket-Quellen '
+                    . '(variationId=' . $variationId . '): '
+                    . implode(' | ', $widersprueche)
+                    . ' | Es wurde NICHTS uebergeben (kein Raten).'
+                );
+                return;
             }
 
             // ---- Nur bei 6/6 uebergeben ----
@@ -121,7 +186,7 @@ class BasketToOrderListener
             $this->getLogger(self::LOG_KENNUNG)->error(
                 '[MIRKA-KURZ] BASKET->ORDER 6/6'
                 . ' | variationId=' . $variationId
-                . ' | uebergeben=' . count($zuUebergeben)
+                . ' | Payload=' . count($zuUebergeben)
             );
 
         } catch (\Throwable $t) {
@@ -130,27 +195,6 @@ class BasketToOrderListener
                 ['message' => $t->getMessage(), 'file' => $t->getFile(), 'line' => $t->getLine()]
             );
         }
-    }
-
-    /**
-     * Liest die Eigenschaftsliste aus dem Warenkorb-Artikel.
-     * Erst originOrderVariationProperties (wie im BasketItemListener),
-     * dann basketItemOrderParams als Ersatz.
-     *
-     * @param mixed $basketItem
-     * @return array
-     */
-    private function leseEigenschaften($basketItem)
-    {
-        $quelle = $this->leseFeld($basketItem, 'originOrderVariationProperties');
-        if (is_array($quelle) && count($quelle) > 0) {
-            return $quelle;
-        }
-        $ersatz = $this->leseFeld($basketItem, 'basketItemOrderParams');
-        if (is_array($ersatz) && count($ersatz) > 0) {
-            return $ersatz;
-        }
-        return [];
     }
 
     /**
