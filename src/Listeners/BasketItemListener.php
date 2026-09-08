@@ -277,6 +277,15 @@ class BasketItemListener
                 return;
             }
 
+            // NEU v1.6.0: BUILD-Kennung beim ersten Testschritt (Band in den
+            // Warenkorb legen). Garantiert sichtbar, damit vor jeder
+            // Auswertung feststeht, welche Version wirklich laeuft (Git-/
+            // Webhook-404 hat mehrfach alten Code laufen lassen). KEIN Fehler.
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-BUILD] Version 1.6.0 | Stufe A (Messung basketItemId->orderItemId)'
+                . ' - dies ist KEINE Fehlermeldung.'
+            );
+
             // Routine-Meldung nur bei Debug (Tab 6).
             $this->diagKontext(
                 'MirkaBeltCalculator [DIAG]: AfterBasketItemAdd ausgeloest.',
@@ -433,17 +442,22 @@ class BasketItemListener
             //   Debug-Funktion. Der Kauf wird durch nichts davon gestoert
             //   (eigenes try/catch).
             // ---------------------------------------------------------
-            if ($config->isDebugMode()) {
-                try {
-                    $this->persistiereAmWarenkorbArtikel($basketItem, $orderProperties, $config);
-                } catch (\Throwable $egal) {
-                    $this->getLogger(self::LOG_KENNUNG)->error(
-                        '[MIRKA-PROBLEM] Basket-Persistenz (Messung) unerwartet abgebrochen | Grund='
-                        . $egal->getMessage(),
-                        ['message' => $egal->getMessage()]
-                    );
-                }
-            }
+            // ---------------------------------------------------------
+            // ABGESCHALTET in v1.6.0 (Stufe A) - Arbeitsanweisung Punkt 24:
+            // "Kein updateBasketItem() auf Verdacht."
+            // ---------------------------------------------------------
+            //   Der Aufruf persistiereAmWarenkorbArtikel() rief
+            //   updateBasketItem() auf. Die Live-Messung (Auftrag 329722)
+            //   hat gezeigt, dass Plenty das mit "validation error found"
+            //   ablehnt (id/variationId/quantity fehlen im Payload) - es hat
+            //   also nie etwas gespeichert, nur das Log vollgeschrieben.
+            //   Der neue Weg (Stufe A -> B -> C) laeuft ueber die
+            //   basketItemId -> orderItemId-Zuordnung, NICHT ueber ein
+            //   Zurueckschreiben in den Warenkorb-Artikel. Die Methode
+            //   persistiereAmWarenkorbArtikel() bleibt vorerst im Code
+            //   liegen, wird aber NICHT mehr aufgerufen.
+            //
+            // (frueher hier: if ($config->isDebugMode()) { persistiere... })
 
 
         } catch (\Throwable $t) {
