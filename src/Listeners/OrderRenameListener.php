@@ -405,12 +405,20 @@ class OrderRenameListener
             foreach ($hauptPositionen as $hauptId => $position) {
                 try {
                     foreach ($position->orderProperties as $op) {
-                        $opId = (int) $op->propertyId;
-                        if ($opId > 0 && !isset($werte[$hauptId][$opId])) {
-                            $werte[$hauptId][$opId] = trim((string) $op->value);
+                        $opId  = (int) $op->propertyId;
+                        $opVal = trim((string) $op->value);
+                        // NEU v1.5.13 (Blocker-Fix): Auch fuellen, wenn der
+                        // Schluessel zwar existiert, aber LEER ist. Quelle A
+                        // legt 64-69 vorher leer an; ohne diese Ergaenzung
+                        // wuerden die vom BasketToOrderListener DIREKT an die
+                        // Position geschriebenen Werte hier ignoriert.
+                        $nochLeer = !isset($werte[$hauptId][$opId])
+                            || trim((string) $werte[$hauptId][$opId]) === '';
+                        if ($opId > 0 && $opVal !== '' && $nochLeer) {
+                            $werte[$hauptId][$opId] = $opVal;
                             $this->diag('[DIAG][Rename] Wert gefunden (C(orderProperties '
                                 . 'Hauptposition)): Eigenschaft ' . $opId . ' = "'
-                                . trim((string) $op->value) . '" (Haupt ' . $hauptId . ')');
+                                . $opVal . '" (Haupt ' . $hauptId . ')');
                         }
                     }
                 } catch (\Throwable $egal) {
@@ -983,9 +991,19 @@ class OrderRenameListener
                     ? $eintrag['werte']
                     : [];
                 foreach ($werteMap as $propertyId => $wert) {
-                    $pid = (int) $propertyId;
-                    if ($pid > 0) {
-                        $werte[$hauptId][$pid] = trim((string) $wert);
+                    $pid  = (int) $propertyId;
+                    $wneu = trim((string) $wert);
+                    // NEU v1.5.13 (Blocker-Fix): Direkte Auftragsdaten
+                    // (BasketToOrderListener -> Quelle C) sind FUEHREND.
+                    // Der Session-Zettel darf einen bereits vorhandenen,
+                    // NICHT-leeren Wert niemals ueberschreiben - er ergaenzt
+                    // nur noch fehlende/leere Werte (Legacy-Fallback). Damit
+                    // kann ein alter, gleich teurer Zettel die korrekten
+                    // direkten Werte nicht mehr verfaelschen.
+                    $nochLeer = !isset($werte[$hauptId][$pid])
+                        || trim((string) $werte[$hauptId][$pid]) === '';
+                    if ($pid > 0 && $nochLeer) {
+                        $werte[$hauptId][$pid] = $wneu;
                     }
                 }
                 $this->diag('[DIAG][Rename] Werte uebernommen (Z(Sitzungs-Zettel)): '
