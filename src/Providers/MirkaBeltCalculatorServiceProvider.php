@@ -102,10 +102,16 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
         );
 
         // -----------------------------------------------------------
-        // (alt 4) + 5) WEITERHIN ABGESCHALTET seit v1.5.24 - WICHTIG
+        // ALTE SCHREIBENDE UEBERGANGS-LISTENER: WEITERHIN ABGESCHALTET
         // -----------------------------------------------------------
-        //   Die beiden Ereignisse BeforeBasketItemToOrderItem und
-        //   AfterBasketItemToOrderItem sind hier NICHT MEHR registriert.
+        //   KLARSTELLUNG (v1.6.0): Das Event AfterBasketItemToOrderItem
+        //   IST oben (Punkt 4) registriert - aber NUR fuer den neuen,
+        //   REIN LESENDEN BasketToOrderMeasureListener (Stufe A). Die alten
+        //   SCHREIBENDEN Listener - BasketToOrderListener (auf
+        //   BeforeBasketItemToOrderItem) und AfterBasketToOrderDiagnoseListener
+        //   (auf AfterBasketItemToOrderItem) - bleiben NICHT registriert.
+        //   Sie haben die Ausloggen-Schleife ausgeloest und werden erst
+        //   wieder aktiviert, wenn sie sauber gebaut sind (siehe unten).
         //
         //   GRUND (belegt im Log vom 08.09.2026, 16:16 Uhr):
         //     - Die Ereignisse feuerten zwischen 16:16:16 und 16:16:50
