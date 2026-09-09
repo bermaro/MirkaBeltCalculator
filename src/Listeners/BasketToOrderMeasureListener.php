@@ -71,7 +71,7 @@ class BasketToOrderMeasureListener
      * Git-/Webhook-404 hat genau das mehrfach verursacht). Die Nummer
      * ZWINGT Plenty NICHT zum Neuladen; sie beweist nur, welcher Code laeuft.
      */
-    const BUILD = 'Version 1.6.1 | Stufe A (Messung basketItemId->orderItemId)';
+    const BUILD = 'Version 1.6.4 | Stufe A2 (Messung basketItemId/orderRowId->orderItemId)';
 
     public function handle(AfterBasketItemToOrderItem $event)
     {
@@ -117,8 +117,9 @@ class BasketToOrderMeasureListener
             // 4) BUILD-Kennung - garantiert sichtbar (error-Kanal).
             //    KEINE echte Fehlermeldung, nur der Versions-Beweis.
             // -------------------------------------------------------------
-            $this->getLogger(self::LOG_KENNUNG)->error(
-                '[MIRKA-BUILD] ' . self::BUILD . ' - dies ist KEINE Fehlermeldung.'
+            $this->getLogger(self::LOG_KENNUNG)->info(
+                'MirkaBeltCalculator::mirka.build',
+                ['text' => '[MIRKA-BUILD] ' . self::BUILD . ' - dies ist KEINE Fehlermeldung.']
             );
 
             // -------------------------------------------------------------
@@ -126,11 +127,13 @@ class BasketToOrderMeasureListener
             //    Ziel: auch wenn orderItemId hier noch leer ist, genug
             //    Felder sehen, um die naechste Bruecke festzulegen.
             // -------------------------------------------------------------
-            $this->getLogger(self::LOG_KENNUNG)->error(
-                '[MIRKA-STUFE-A] BASKET->ORDER (echter Uebergang)'
+            $this->getLogger(self::LOG_KENNUNG)->info(
+                'MirkaBeltCalculator::mirka.stufeA',
+                ['text' => '[MIRKA-STUFE-A] BASKET->ORDER (echter Uebergang)'
                 . ' | WARENKORB:'
                     . ' basketId=' . $this->text($this->lese($biFelder, 'basketId'))
                     . ' basketItemId=' . $this->text($this->lese($biFelder, 'id'))
+                    . ' orderRowId=' . $this->text($this->lese($biFelder, 'orderRowId'))
                     . ' variationId=' . $this->text($this->lese($biFelder, 'variationId'))
                     . ' quantity=' . $this->text($this->lese($biFelder, 'quantity'))
                     . ' position=' . $this->text($this->lese($biFelder, 'position'))
@@ -143,7 +146,7 @@ class BasketToOrderMeasureListener
                     . ' orderItem.basketItemId=' . $this->text($this->lese($oiFelder, 'basketItemId'))
                     . ' references=' . $this->kompakt($this->lese($oiFelder, 'references'))
                 . ' || WARENKORB-Felder: ' . $this->schluessel($biFelder)
-                . ' || AUFTRAG-Felder: ' . $this->schluessel($oiFelder)
+                . ' || AUFTRAG-Felder: ' . $this->schluessel($oiFelder)]
             );
 
         } catch (\Throwable $t) {
