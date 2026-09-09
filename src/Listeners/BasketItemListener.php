@@ -10,7 +10,7 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.6.1 - Stufe A)
+ * BasketItemListener (v1.6.3 - Stufe A2)
  *
  * ---------------------------------------------------------------------
  * v1.6.0/1.6.1 (08.09.2026): BASKET-PERSISTENZ ABGESCHALTET (KORREKTUR)
@@ -297,9 +297,10 @@ class BasketItemListener
             // Warenkorb legen). Garantiert sichtbar, damit vor jeder
             // Auswertung feststeht, welche Version wirklich laeuft (Git-/
             // Webhook-404 hat mehrfach alten Code laufen lassen). KEIN Fehler.
-            $this->getLogger(self::LOG_KENNUNG)->error(
-                '[MIRKA-BUILD] Version 1.6.1 | Stufe A (Messung basketItemId->orderItemId)'
-                . ' - dies ist KEINE Fehlermeldung.'
+            $this->getLogger(self::LOG_KENNUNG)->info(
+                'MirkaBeltCalculator::mirka.build',
+                ['text' => '[MIRKA-BUILD] Version 1.6.4 | Stufe A2 (Messung basketItemId/orderRowId->orderItemId)'
+                . ' - dies ist KEINE Fehlermeldung.']
             );
 
             // Routine-Meldung nur bei Debug (Tab 6).
