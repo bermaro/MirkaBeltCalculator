@@ -101,6 +101,17 @@ class MirkaBeltCalculatorServiceProvider extends ServiceProvider
             'MirkaBeltCalculator\\Listeners\\BasketToOrderMeasureListener@handle'
         );
 
+        // 5) NEU v1.6.3 - STUFE A2: REINE MESSUNG am FERTIGEN Auftrag.
+        //    Liest nur (unter Debug): orderId, je Position orderItemId,
+        //    references und den echten Inhalt von Feld 81/82/83. Aendert
+        //    NICHTS. Zusammen mit orderRowId aus dem BasketToOrderMeasure-
+        //    Listener soll das die Bruecke basketItemId -> orderItemId
+        //    beweisen. Siehe OrderCreatedMeasureListener (Klassenkopf).
+        $eventDispatcher->listen(
+            OrderCreated::class,
+            'MirkaBeltCalculator\\Listeners\\OrderCreatedMeasureListener@handle'
+        );
+
         // -----------------------------------------------------------
         // ALTE SCHREIBENDE UEBERGANGS-LISTENER: WEITERHIN ABGESCHALTET
         // -----------------------------------------------------------
