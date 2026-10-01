@@ -9,7 +9,20 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.5.25)
+ * OrderRenameListener (v1.6.6)
+ *
+ * NEU v1.6.6 (01.10.2026): VERPACKUNGSEINHEIT IM POSITIONSNAMEN
+ *   Wunsch Bernd: Kunden halten den Packpreis fuer den Preis EINES Bandes.
+ *   Die Mirka-Schnittstelle liefert je Konfiguration "beltsPerPack"
+ *   (gemessen 30.09.2026: 10 bzw. 5 Stueck - je nach Band verschieden).
+ *   Der BasketItemListener schreibt den Wert seit v1.6.6 als
+ *   "stueckProPack" mit auf den Sitzungs-Zettel. Wird der Zettel einer
+ *   Position zugeordnet, merkt sich dieser Listener den Wert und haengt
+ *   an den Positionsnamen die Zeile "Inhalt: X Stueck pro Pack" an.
+ *   Fehlt der Wert (alter Zettel, Mock-Modus), bleibt der Name wie bisher
+ *   - es wird NICHTS geraten.
+ *
+ * Fruehere Fassung: (v1.5.25)
  *
  * ---------------------------------------------------------------------
  * v1.5.25 (08.09.2026): LOG-STUFEN KORRIGIERT
@@ -210,6 +223,12 @@ class OrderRenameListener
      */
     private $debugGeprueft = false;
     private $debugAn = true;
+
+    /**
+     * NEU v1.6.6: Stueck pro Pack je Hauptposition (orderItemId => Anzahl),
+     * gefuellt aus dem zugeordneten Sitzungs-Zettel. Leer = unbekannt.
+     */
+    private $stueckProPackJeHaupt = [];
 
     /** Positionstyp: normale Variantenposition (der Sammelartikel). */
     const TYP_VARIANTENPOSITION = 1;
@@ -611,6 +630,14 @@ class OrderRenameListener
                     . 'Körnung: P' . $grit . ' · Verbindung: ' . $joint . "\n"
                     . 'Maß: ' . $breite . ' x ' . $laenge . ' mm'
                     . ($mirkaNr !== '' ? "\n" . 'Mirka-Nr.: ' . $mirkaNr : '');
+
+                // NEU v1.6.6: Verpackungseinheit anhaengen - nur wenn sie
+                // vom Zettel bekannt ist (keine Annahme, kein Standardwert).
+                $stueckProPack = isset($this->stueckProPackJeHaupt[(int) $hauptId])
+                    ? (int) $this->stueckProPackJeHaupt[(int) $hauptId] : 0;
+                if ($stueckProPack > 0) {
+                    $neuerName .= "\n" . 'Inhalt: ' . $stueckProPack . ' Stück pro Pack';
+                }
 
                 $neueNamen[$hauptId] = $neuerName;
 
@@ -1139,6 +1166,16 @@ class OrderRenameListener
                 // Zettel ist zugeordnet -> in JEDEM Fall als verbraucht
                 // markieren, auch wenn die Position ihn nicht braucht.
                 $benutzteIndizes[$gewaehlterIndex] = true;
+
+                // NEU v1.6.6: Verpackungseinheit vom zugeordneten Zettel
+                // merken - auch dann, wenn die sechs Werte schon direkt da
+                // sind (der Zettel ist trotzdem eindeutig dieser Position
+                // zugeordnet).
+                if (isset($liste[$gewaehlterIndex]['stueckProPack'])
+                    && (int) $liste[$gewaehlterIndex]['stueckProPack'] > 0) {
+                    $this->stueckProPackJeHaupt[(int) $hauptId] =
+                        (int) $liste[$gewaehlterIndex]['stueckProPack'];
+                }
 
                 if ($schonVollstaendig) {
                     $this->diag('[DIAG][Rename] Haupt ' . (int) $hauptId
