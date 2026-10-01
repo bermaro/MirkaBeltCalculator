@@ -10,7 +10,15 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use MirkaBeltCalculator\Services\PriceCalculationService;
 
 /**
- * BasketItemListener (v1.6.5 - Warenkorb-Schutz / fail-closed)
+ * BasketItemListener (v1.6.6 - Verpackungseinheit auf dem Zettel)
+ *
+ * NEU v1.6.6 (01.10.2026): Die Preisberechnung liefert jetzt zusaetzlich
+ *   "stueckProPack" (aus beltsPerPack der Mirka-Schnittstelle). Der Wert
+ *   wird mit auf den Sitzungs-Zettel geschrieben; der OrderRenameListener
+ *   zeigt ihn im Positionsnamen ("Inhalt: X Stueck pro Pack"). Sonst
+ *   unveraendert gegenueber v1.6.5.
+ *
+ * v1.6.5 - Warenkorb-Schutz / fail-closed:
  *
  * ---------------------------------------------------------------------
  * NEU v1.6.5 (30.09.2026): UNKONFIGURIERTE ARTIKEL AUS DEM KORB NEHMEN
@@ -330,7 +338,7 @@ class BasketItemListener
             // Webhook-404 hat mehrfach alten Code laufen lassen). KEIN Fehler.
             $this->getLogger(self::LOG_KENNUNG)->info(
                 'MirkaBeltCalculator::mirka.build',
-                ['text' => '[MIRKA-BUILD] Version 1.6.5 | Warenkorb-Schutz (unkonfigurierte Artikel werden entfernt)'
+                ['text' => '[MIRKA-BUILD] Version 1.6.6 | Verpackungseinheit im Positionsnamen + Warenkorb-Schutz'
                 . ' - dies ist KEINE Fehlermeldung.']
             );
 
@@ -455,7 +463,10 @@ class BasketItemListener
             // der Sitzung ablegen (am Auftrag speichert Plenty sie nicht).
             // Fehler hier duerfen den Kauf NIEMALS stoeren -> eigenes try.
             try {
-                $this->merkeKonfigurationFuerRename($orderProperties, (float) $result['verkaufspreis']);
+                // NEU v1.6.6: Stueck pro Pack mitgeben (0 = unbekannt).
+                $stueckProPack = (isset($result['stueckProPack']) && (int) $result['stueckProPack'] > 0)
+                    ? (int) $result['stueckProPack'] : 0;
+                $this->merkeKonfigurationFuerRename($orderProperties, (float) $result['verkaufspreis'], $stueckProPack);
             } catch (\Throwable $egal) {
                 $this->getLogger(self::LOG_KENNUNG)->error(
                     '[MIRKA-PROBLEM] Zettel konnte nicht gespeichert werden | Grund='
@@ -1031,7 +1042,7 @@ class BasketItemListener
      * Warenkorb funktionieren. Nur die letzten 10 Eintraege werden
      * behalten (Speicher-Hygiene).
      */
-    private function merkeKonfigurationFuerRename(array $orderProperties, $preis)
+    private function merkeKonfigurationFuerRename(array $orderProperties, $preis, $stueckProPack = 0)
     {
         /** @var FrontendSessionStorageFactoryContract $sessionFactory */
         $sessionFactory = pluginApp(FrontendSessionStorageFactoryContract::class);
@@ -1051,6 +1062,8 @@ class BasketItemListener
             'preis' => (float) $preis,
             'zeit'  => time(),
             'werte' => [],
+            // NEU v1.6.6: Verpackungseinheit (0 = unbekannt)
+            'stueckProPack' => (int) $stueckProPack,
         ];
         foreach ($orderProperties as $prop) {
             $propertyId = (int) $this->getPropertyId($prop);
@@ -1124,6 +1137,7 @@ class BasketItemListener
                     . ' | Laenge='    . $this->zettelWert($w, $cfg->getPropertyIdLaenge())
                     . ' | MirkaNr='   . $this->zettelWert($w, $cfg->getPropertyIdMirkaCode())
                     . ' | Preis(brutto)=' . (float) $preis
+                    . ' | StueckProPack=' . ((int) $stueckProPack > 0 ? (int) $stueckProPack : '(unbekannt)')
                     . ' | Session-Zettel=' . count($liste)]
             );
         } catch (\Throwable $egal) {
