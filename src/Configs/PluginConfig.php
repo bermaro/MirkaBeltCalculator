@@ -265,6 +265,27 @@ class PluginConfig
     }
 
     // -----------------------------------------------------------------
+    //  Einkaufspreis sofort setzen (NEU v1.6.7, Tab 9)
+    // -----------------------------------------------------------------
+
+    /**
+     * Modus fuer das sofortige Setzen des Einkaufspreises beim Anlegen
+     * des Auftrags (OrderRenameListener). Rueckgabe IMMER einer der Werte:
+     *   'off' = Funktion aus (EK setzt nur die EK-Automatik)
+     *   'log' = PROBELAUF, nur protokollieren (Standard)
+     *   'on'  = EK wird geschrieben und zurueckgelesen
+     * Unbekannte Werte fallen sicherheitshalber auf 'log' zurueck.
+     */
+    public function getPurchasePriceMode()
+    {
+        $wert = (string) $this->config->get('MirkaBeltCalculator.purchasePriceMode', 'log');
+        if ($wert !== 'off' && $wert !== 'log' && $wert !== 'on') {
+            $wert = 'log';
+        }
+        return $wert;
+    }
+
+    // -----------------------------------------------------------------
     //  Fehlerschutz / Fail-closed (NEU v1.4.7, Tab 8)
     // -----------------------------------------------------------------
 
