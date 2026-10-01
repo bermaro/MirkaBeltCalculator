@@ -9,7 +9,28 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.6.6)
+ * OrderRenameListener (v1.6.7)
+ *
+ * NEU v1.6.7 (01.10.2026): EINKAUFSPREIS SOFORT SETZEN (Tab 9)
+ *   Wunsch Bernd: Der EK soll nicht erst nach bis zu 15 Minuten von der
+ *   EK-Automatik (Apps Script) kommen, sondern sofort beim Anlegen des
+ *   Auftrags stehen. Wichtig auch fuer Nachbestellungen: Plenty uebernimmt
+ *   den Preis der Nachbestellung aus dem purchasePrice des Kundenauftrags
+ *   (Lektion 31.07.2026, Nachbestellung 328485).
+ *   Formel wie in der EK-Automatik: EK = VK netto / (1 + Margenfaktor).
+ *   Schreibweg: dasselbe Datenformat, mit dem die EK-Automatik den EK
+ *   seit Juli erfolgreich per REST setzt
+ *   (orderItems[].amounts[].id + purchasePrice).
+ *   Sicherheit:
+ *     - Tab 9: off / log (PROBELAUF, Standard) / on.
+ *     - Nach dem Schreiben wird der Auftrag NEU geladen und der EK
+ *       nachgezaehlt (HTTP-Erfolg ist kein Beweis, T3 Paragraph 14).
+ *       Rechnungsbetrag und Positionszahl muessen unveraendert sein.
+ *     - Eigenes try/catch: Fehler stoeren den Auftrag nie. Die
+ *       EK-Automatik bleibt als Sicherheitsnetz bestehen.
+ *   Bekannte Grenze: Laeuft eine Rabatt-Aktion (AKTIONSFAKTOR in der
+ *   EK-Automatik), kennt das Plugin den Faktor nicht. Die EK-Automatik
+ *   ueberschreibt den Wert dann beim naechsten Lauf mit ihrem Ergebnis.
  *
  * NEU v1.6.6 (01.10.2026): VERPACKUNGSEINHEIT IM POSITIONSNAMEN
  *   Wunsch Bernd: Kunden halten den Packpreis fuer den Preis EINES Bandes.
@@ -684,6 +705,11 @@ class OrderRenameListener
             // Nachrichtentext (Suchbegriff im Log: MIRKA-KURZ).
             $this->kurzMeldungAuftrag($auftragsId, $hauptPositionen, $guardProbleme);
 
+            // NEU v1.6.7: Einkaufspreis sofort setzen (Tab 9). Laeuft
+            // unabhaengig von Umbenennung und Guard und VOR deren
+            // moeglichen Ausstiegen. Eigenes try/catch in der Methode.
+            $this->setzeEinkaufspreiseSofort($config, $auftragsId, $order, $hauptPositionen);
+
             if (count($neueNamen) === 0) {
                 return; // Nichts umzubenennen.
             }
@@ -817,6 +843,205 @@ class OrderRenameListener
         // Rueckfall: das Objekt aus dem Event.
         $this->diag('[DIAG][Rename] Rueckfall auf das Event-Objekt.');
         return $eventAuftrag;
+    }
+
+    /**
+     * NEU v1.6.7: Setzt den Einkaufspreis (purchasePrice) aller
+     * Baender-Positionen sofort beim Anlegen des Auftrags.
+     *
+     * Ablauf:
+     *   1. Je Hauptposition den Betrags-Datensatz (amounts) lesen:
+     *      Betrags-ID, VK netto, bisheriger EK.
+     *   2. Soll-EK = VK netto / (1 + Margenfaktor), auf Cent gerundet.
+     *   3. Modus 'log' (PROBELAUF): nur melden, was gesetzt wuerde.
+     *      Modus 'on': schreiben, Auftrag neu laden, nachzaehlen.
+     *
+     * @param PluginConfig $config
+     * @param int          $auftragsId
+     * @param object       $order            frisch geladener Auftrag
+     * @param array        $hauptPositionen  orderItemId => Position
+     */
+    private function setzeEinkaufspreiseSofort($config, $auftragsId, $order, $hauptPositionen)
+    {
+        try {
+            $modus = $config->getPurchasePriceMode();
+            if ($modus === 'off') {
+                return;
+            }
+
+            $margenfaktor = 1.0 + (float) $config->getMarginFactor();
+            if ($margenfaktor <= 0) {
+                $this->wichtig('[MIRKA-EK] Auftrag ' . (int) $auftragsId
+                    . ': ungueltiger Margenfaktor - es wird KEIN EK gesetzt.');
+                return;
+            }
+
+            // --- 1+2: Soll-Werte je Hauptposition bestimmen ----------
+            $plan = []; // Liste: positionsId, betragsId, vkNetto, ekAlt, ekNeu
+            foreach ($hauptPositionen as $hauptId => $position) {
+                $betrag = $this->leseSystemBetrag($position);
+                if ($betrag === null) {
+                    $this->wichtig('[MIRKA-EK] Auftrag ' . (int) $auftragsId
+                        . ' | Position ' . (int) $hauptId
+                        . ': Betragsdaten (amounts) nicht lesbar - KEIN EK gesetzt.'
+                        . ' Die EK-Automatik uebernimmt.');
+                    continue;
+                }
+                if ($betrag['vkNetto'] <= 0) {
+                    $this->wichtig('[MIRKA-EK] Auftrag ' . (int) $auftragsId
+                        . ' | Position ' . (int) $hauptId
+                        . ': VK netto ist 0 - KEIN EK gesetzt.');
+                    continue;
+                }
+                $ekNeu = round($betrag['vkNetto'] / $margenfaktor, 2);
+                $plan[] = [
+                    'positionsId' => (int) $hauptId,
+                    'betragsId'   => $betrag['id'],
+                    'vkNetto'     => $betrag['vkNetto'],
+                    'ekAlt'       => $betrag['ek'],
+                    'ekNeu'       => $ekNeu,
+                ];
+            }
+            if (count($plan) === 0) {
+                return;
+            }
+
+            // --- 3a: PROBELAUF -----------------------------------------
+            if ($modus !== 'on') {
+                foreach ($plan as $p) {
+                    $this->wichtig('[MIRKA-EK] PROBELAUF v1.6.7 (keine Fehlermeldung) | Auftrag '
+                        . (int) $auftragsId . ' | Position ' . $p['positionsId']
+                        . ' | VK netto=' . $p['vkNetto']
+                        . ' | EK bisher=' . $p['ekAlt']
+                        . ' | wuerde setzen=' . $p['ekNeu']
+                        . ' | Betrags-ID=' . $p['betragsId']
+                        . ' | Es wurde NICHTS geschrieben (Tab 9 auf PROBELAUF).');
+                }
+                return;
+            }
+
+            // --- 3b: SCHARF: schreiben ---------------------------------
+            // Wie beim Umbenennen werden ALLE Positionen mit id + bisherigem
+            // Namen uebergeben (damit keine Position als fehlend gilt);
+            // nur die Baender-Positionen bekommen zusaetzlich den EK.
+            $ekJePosition = [];
+            foreach ($plan as $p) {
+                $ekJePosition[$p['positionsId']] = $p;
+            }
+            $payloadPositionen = [];
+            foreach ($order->orderItems as $position) {
+                $id = (int) $position->id;
+                $eintrag = [
+                    'id'            => $id,
+                    'orderItemName' => (string) $position->orderItemName,
+                ];
+                if (isset($ekJePosition[$id])) {
+                    $eintrag['amounts'] = [[
+                        'id'            => $ekJePosition[$id]['betragsId'],
+                        'purchasePrice' => $ekJePosition[$id]['ekNeu'],
+                    ]];
+                }
+                $payloadPositionen[] = $eintrag;
+            }
+
+            $betragVorher     = $this->leseRechnungsbetrag($order);
+            $positionenVorher = count($order->orderItems);
+
+            /** @var OrderRepositoryContract $orderRepo */
+            $orderRepo = pluginApp(OrderRepositoryContract::class);
+            $orderRepo->updateOrder(['orderItems' => $payloadPositionen], $auftragsId);
+
+            // --- Nachkontrolle: neu laden und nachzaehlen ---------------
+            $kontrolle         = $orderRepo->findOrderById($auftragsId);
+            $betragNachher     = $this->leseRechnungsbetrag($kontrolle);
+            $positionenNachher = count($kontrolle->orderItems);
+
+            $bestaetigt = 0;
+            $abweichungen = [];
+            foreach ($kontrolle->orderItems as $position) {
+                $id = (int) $position->id;
+                if (!isset($ekJePosition[$id])) {
+                    continue;
+                }
+                $nachher = $this->leseSystemBetrag($position);
+                $ekIst = ($nachher !== null) ? $nachher['ek'] : -1;
+                // Betrag OHNE abs() - in der Plenty-Sandbox verboten.
+                $differenz = $ekIst - $ekJePosition[$id]['ekNeu'];
+                if ($differenz < 0) {
+                    $differenz = -$differenz;
+                }
+                if ($nachher !== null && $differenz < 0.005) {
+                    $bestaetigt++;
+                } else {
+                    $abweichungen[] = 'Position ' . $id . ': soll ' . $ekJePosition[$id]['ekNeu']
+                        . ', ist ' . ($nachher !== null ? $ekIst : 'nicht lesbar');
+                }
+            }
+
+            $rahmenOk = ($betragVorher === $betragNachher && $positionenVorher === $positionenNachher);
+            if ($bestaetigt === count($plan) && $rahmenOk) {
+                $texte = [];
+                foreach ($plan as $p) {
+                    $texte[] = 'Position ' . $p['positionsId'] . ': ' . $p['ekAlt'] . ' -> ' . $p['ekNeu'];
+                }
+                $this->wichtig('[MIRKA-EK] OK v1.6.7 (keine Fehlermeldung) | Auftrag '
+                    . (int) $auftragsId . ' | EK gesetzt und per Zuruecklesen bestaetigt | '
+                    . implode(' | ', $texte));
+            } else {
+                $this->wichtig('[MIRKA-PROBLEM] [MIRKA-EK] Auftrag ' . (int) $auftragsId
+                    . ': EK-Kontrolle NICHT bestanden | bestaetigt=' . $bestaetigt . '/' . count($plan)
+                    . ' | Rechnungsbetrag vorher=' . $betragVorher . ' nachher=' . $betragNachher
+                    . ' | Positionen vorher=' . $positionenVorher . ' nachher=' . $positionenNachher
+                    . (count($abweichungen) > 0 ? ' | ' . implode(' | ', $abweichungen) : '')
+                    . ' | Die EK-Automatik versucht es beim naechsten Lauf erneut.'
+                    . ' Bei Abweichung im Rechnungsbetrag: Tab 9 auf PROBELAUF stellen!');
+            }
+        } catch (\Throwable $fehler) {
+            // Der Auftrag darf NIEMALS gestoert werden - nur melden.
+            $this->wichtig('[MIRKA-PROBLEM] [MIRKA-EK] Auftrag ' . (int) $auftragsId
+                . ': EK-Fehler: ' . $fehler->getMessage()
+                . ' | Die EK-Automatik uebernimmt.');
+        }
+    }
+
+    /**
+     * NEU v1.6.7: Liest den Betrags-Datensatz einer Auftragsposition in
+     * Systemwaehrung (isSystemCurrency), sonst den ersten. Fest benannte
+     * Zugriffe (Sandbox-Regel). Liefert null, wenn nichts lesbar ist.
+     *
+     * @param mixed $position Auftragsposition
+     * @return array|null  ['id' => int, 'vkNetto' => float, 'ek' => float]
+     */
+    private function leseSystemBetrag($position)
+    {
+        try {
+            $erster = null;
+            $system = null;
+            foreach ($position->amounts as $betrag) {
+                if ($erster === null) {
+                    $erster = $betrag;
+                }
+                if ((bool) $betrag->isSystemCurrency === true) {
+                    $system = $betrag;
+                    break;
+                }
+            }
+            $gewaehlt = ($system !== null) ? $system : $erster;
+            if ($gewaehlt === null) {
+                return null;
+            }
+            $id = (int) $gewaehlt->id;
+            if ($id <= 0) {
+                return null;
+            }
+            return [
+                'id'      => $id,
+                'vkNetto' => (float) $gewaehlt->priceNet,
+                'ek'      => (float) $gewaehlt->purchasePrice,
+            ];
+        } catch (\Throwable $egal) {
+            return null;
+        }
     }
 
     /**
