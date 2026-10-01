@@ -12,6 +12,9 @@ use MirkaBeltCalculator\Services\PriceCalculationService;
 /**
  * BasketItemListener (v1.6.6 - Verpackungseinheit auf dem Zettel)
  *
+ * v1.6.7 (01.10.2026): In dieser Datei NUR die BUILD-Kennung auf 1.6.7
+ *   gesetzt. Die neue EK-Funktion steckt im OrderRenameListener.
+ *
  * NEU v1.6.6 (01.10.2026): Die Preisberechnung liefert jetzt zusaetzlich
  *   "stueckProPack" (aus beltsPerPack der Mirka-Schnittstelle). Der Wert
  *   wird mit auf den Sitzungs-Zettel geschrieben; der OrderRenameListener
@@ -338,7 +341,7 @@ class BasketItemListener
             // Webhook-404 hat mehrfach alten Code laufen lassen). KEIN Fehler.
             $this->getLogger(self::LOG_KENNUNG)->info(
                 'MirkaBeltCalculator::mirka.build',
-                ['text' => '[MIRKA-BUILD] Version 1.6.6 | Verpackungseinheit im Positionsnamen + Warenkorb-Schutz'
+                ['text' => '[MIRKA-BUILD] Version 1.6.7 | EK sofort beim Auftrag (Tab 9) + Verpackungseinheit + Warenkorb-Schutz'
                 . ' - dies ist KEINE Fehlermeldung.']
             );
 
