@@ -6,7 +6,9 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 use Plenty\Plugin\Log\Loggable;
 
 /**
- * PriceCalculationService (v1.0.9)
+ * PriceCalculationService (v1.0.9, ergaenzt in v1.6.6)
+ *
+ * NEU v1.6.6: Rueckgabe enthaelt 'stueckProPack' (Baender pro Pack) oder null.
  *
  * KEIN Constructor mehr. Abhaengigkeiten werden in calculate() per
  * pluginApp() geholt, um die DI-Kette flach zu halten.
@@ -49,6 +51,9 @@ class PriceCalculationService
         $uvp    = $apiResult['uvp'];
         $source = $apiResult['source'];
         $detail = $apiResult['detail'];
+        // NEU v1.6.6: Verpackungseinheit (Baender pro Pack), falls die API sie liefert.
+        $stueckProPack = (isset($apiResult['beltsPerPack']) && (int) $apiResult['beltsPerPack'] > 0)
+            ? (int) $apiResult['beltsPerPack'] : null;
 
         if ($uvp === null || $uvp <= 0) {
             return [
@@ -62,6 +67,7 @@ class PriceCalculationService
                 'vatRatePercent'     => $vatRate,
                 'source'             => $source,
                 'detail'             => $detail,
+                'stueckProPack'      => null,
             ];
         }
 
@@ -98,6 +104,7 @@ class PriceCalculationService
             'vatRatePercent'     => $vatRate,
             'source'             => $source,
             'detail'             => $detail,
+            'stueckProPack'      => $stueckProPack,
         ];
     }
 }
