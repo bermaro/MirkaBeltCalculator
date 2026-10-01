@@ -7,7 +7,10 @@ use Plenty\Modules\Plugin\Libs\Contracts\LibraryCallContract;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * MirkaApiClient (v1.3.1)
+ * MirkaApiClient (v1.3.1, ergaenzt in v1.6.6)
+ *
+ * NEU v1.6.6: Im Erfolgsfall wird zusaetzlich 'beltsPerPack' (Baender pro
+ * Verpackungseinheit) aus der Cloud-Function-Antwort zurueckgegeben.
  *
  * UMBAU GEGENUEBER v1.0.8:
  * Der eigentliche HTTP-Aufruf (Guzzle) wird NICHT mehr direkt hier gemacht.
@@ -180,10 +183,21 @@ class MirkaApiClient
                     );
                 }
 
+                // NEU v1.6.6: Verpackungseinheit (Baender pro Pack) mitgeben.
+                // Die Cloud Function liefert sie als 'beltsPerPack' (z. B. 5, 10).
+                // Fehlt der Wert oder ist er ungueltig -> null (dann wird im
+                // Positionsnamen einfach keine Pack-Zeile angezeigt).
+                $beltsPerPack = null;
+                if (isset($data['beltsPerPack']) && is_numeric($data['beltsPerPack'])
+                    && (int) $data['beltsPerPack'] > 0) {
+                    $beltsPerPack = (int) $data['beltsPerPack'];
+                }
+
                 return [
-                    'uvp'    => $uvp,
-                    'source' => 'api',
-                    'detail' => 'Mirka-UVP ' . number_format($uvp, 2) . ' EUR',
+                    'uvp'          => $uvp,
+                    'source'       => 'api',
+                    'detail'       => 'Mirka-UVP ' . number_format($uvp, 2) . ' EUR',
+                    'beltsPerPack' => $beltsPerPack,
                 ];
             }
 
