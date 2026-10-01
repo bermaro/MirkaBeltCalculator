@@ -268,5 +268,17 @@
         "label": "Auftrags-Status-ID fuer gesperrte Fehlbestellungen (z.B. 8 fuer Storno oder ein eigener Klaerungs-Status). Nur wirksam im Modus AN. Leer = nur melden, nicht sperren.",
         "type": "text",
         "default": "1"
+    },
+    {
+        "tab": "9. Einkaufspreis",
+        "key": "purchasePriceMode",
+        "label": "Einkaufspreis (EK) sofort beim Anlegen des Auftrags setzen: EK = VK netto der Band-Position geteilt durch (1 + Margenfaktor aus Tab 3). Die EK-Automatik (Apps Script, alle 15 Min.) bleibt als Sicherheitsnetz bestehen.",
+        "type": "dropdown",
+        "possibleValues": {
+            "off": "AUS (EK setzt nur die EK-Automatik)",
+            "log": "PROBELAUF (nur ins Log schreiben, welcher EK gesetzt wuerde - Auftrag unveraendert)",
+            "on": "AN (EK wird sofort in den Auftrag geschrieben und zur Kontrolle zurueckgelesen)"
+        },
+        "default": "log"
     }
 ]
