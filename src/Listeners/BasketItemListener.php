@@ -12,6 +12,16 @@ use MirkaBeltCalculator\Services\PriceCalculationService;
 /**
  * BasketItemListener (v1.6.6 - Verpackungseinheit auf dem Zettel)
  *
+ * v1.6.9 (27.10.2026): MIRKA-ANTWORT IST MASSGEBLICH.
+ *   - Mirka-Nr. sowie Breite/Laenge auf dem Sitzungs-Zettel kommen jetzt aus
+ *     der Mirka-Antwort (Nummer + Produktname), nicht mehr aus der Eingabe.
+ *     Mirka rastet Laengen ein (7198 -> 7200, gemessen 27.10.2026 und im
+ *     Mirka-Partnerportal von Bernd bestaetigt). Geliefert wird das
+ *     eingerastete Band - genau das muss im Auftrag stehen.
+ *   - Weicht die Eingabe ab: Logzeile [MIRKA-RASTER].
+ *   - Die Zeile [MIRKA-KURZ] WARENKORB laeuft jetzt auf dem error-Kanal im
+ *     Klartext und wird damit IMMER gespeichert (Rettungsdaten an der Quelle).
+ * v1.6.8 (27.10.2026): In dieser Datei NUR die BUILD-Kennung auf 1.6.8.
  * v1.6.7 (01.10.2026): In dieser Datei NUR die BUILD-Kennung auf 1.6.7
  *   gesetzt. Die neue EK-Funktion steckt im OrderRenameListener.
  *
@@ -341,7 +351,7 @@ class BasketItemListener
             // Webhook-404 hat mehrfach alten Code laufen lassen). KEIN Fehler.
             $this->getLogger(self::LOG_KENNUNG)->info(
                 'MirkaBeltCalculator::mirka.build',
-                ['text' => '[MIRKA-BUILD] Version 1.6.7 | EK sofort beim Auftrag (Tab 9) + Verpackungseinheit + Warenkorb-Schutz'
+                ['text' => '[MIRKA-BUILD] Version 1.6.9 | Mirka-Masse aus Mirka-Antwort + WARENKORB-Log dauerhaft + Zuordnung ueber Mirka-Nr. + Rettungsdaten + EK sofort (Tab 9) + Verpackungseinheit + Warenkorb-Schutz'
                 . ' - dies ist KEINE Fehlermeldung.']
             );
 
@@ -469,7 +479,8 @@ class BasketItemListener
                 // NEU v1.6.6: Stueck pro Pack mitgeben (0 = unbekannt).
                 $stueckProPack = (isset($result['stueckProPack']) && (int) $result['stueckProPack'] > 0)
                     ? (int) $result['stueckProPack'] : 0;
-                $this->merkeKonfigurationFuerRename($orderProperties, (float) $result['verkaufspreis'], $stueckProPack);
+                // NEU v1.6.9: Mirka-Antwort (Nummer + echte Masse) mitgeben.
+                $this->merkeKonfigurationFuerRename($orderProperties, (float) $result['verkaufspreis'], $stueckProPack, $result);
             } catch (\Throwable $egal) {
                 $this->getLogger(self::LOG_KENNUNG)->error(
                     '[MIRKA-PROBLEM] Zettel konnte nicht gespeichert werden | Grund='
@@ -1045,7 +1056,7 @@ class BasketItemListener
      * Warenkorb funktionieren. Nur die letzten 10 Eintraege werden
      * behalten (Speicher-Hygiene).
      */
-    private function merkeKonfigurationFuerRename(array $orderProperties, $preis, $stueckProPack = 0)
+    private function merkeKonfigurationFuerRename(array $orderProperties, $preis, $stueckProPack = 0, $mirka = [])
     {
         /** @var FrontendSessionStorageFactoryContract $sessionFactory */
         $sessionFactory = pluginApp(FrontendSessionStorageFactoryContract::class);
@@ -1075,6 +1086,49 @@ class BasketItemListener
                 $eintrag['werte'][(string) $propertyId] = $wert;
             }
         }
+
+        // NEU v1.6.9: Die Mirka-Antwort ist massgeblich, nicht die Eingabe.
+        //   - Mirka-Nr. kommt SERVERSEITIG aus der Mirka-Antwort (nicht aus
+        //     dem Browser des Kunden).
+        //   - Breite/Laenge kommen aus dem Mirka-Produktnamen, weil Mirka
+        //     krumme Laengen auf ein Raster einrastet (7198 -> 7200).
+        //     Geliefert wird das eingerastete Band.
+        //   - Die Eingabe des Kunden bleibt zur Nachvollziehbarkeit im
+        //     Zettel unter 'eingabe' erhalten.
+        try {
+            /** @var PluginConfig $cfgM */
+            $cfgM = pluginApp(PluginConfig::class);
+            $idNr = (string) $cfgM->getPropertyIdMirkaCode();
+            $idB  = (string) $cfgM->getPropertyIdBreite();
+            $idL  = (string) $cfgM->getPropertyIdLaenge();
+            $eintrag['eingabe'] = [
+                'breite'  => isset($eintrag['werte'][$idB]) ? $eintrag['werte'][$idB] : '',
+                'laenge'  => isset($eintrag['werte'][$idL]) ? $eintrag['werte'][$idL] : '',
+                'mirkaNr' => isset($eintrag['werte'][$idNr]) ? $eintrag['werte'][$idNr] : '',
+            ];
+            $mNr = (is_array($mirka) && isset($mirka['mirkaNr'])) ? trim((string) $mirka['mirkaNr']) : '';
+            $mB  = (is_array($mirka) && isset($mirka['mirkaBreite'])) ? (int) $mirka['mirkaBreite'] : 0;
+            $mL  = (is_array($mirka) && isset($mirka['mirkaLaenge'])) ? (int) $mirka['mirkaLaenge'] : 0;
+            if ($mNr !== '') {
+                $eintrag['werte'][$idNr] = $mNr;
+            }
+            if ($mB > 0 && $mL > 0) {
+                $eintrag['werte'][$idB] = (string) $mB;
+                $eintrag['werte'][$idL] = (string) $mL;
+                if ((string) $mB !== trim((string) $eintrag['eingabe']['breite'])
+                    || (string) $mL !== trim((string) $eintrag['eingabe']['laenge'])) {
+                    $this->getLogger(self::LOG_KENNUNG)->error(
+                        '[MIRKA-RASTER] (keine Fehlermeldung) Kunde gab '
+                        . $eintrag['eingabe']['breite'] . ' x ' . $eintrag['eingabe']['laenge']
+                        . ' mm ein - Mirka fertigt ' . $mB . ' x ' . $mL . ' mm (Mirka-Nr. '
+                        . $mNr . '). Im Auftrag steht das Mirka-Mass.'
+                    );
+                }
+            }
+        } catch (\Throwable $egal) {
+            // Ohne Mirka-Daten bleibt die Eingabe stehen (nichts geraten).
+        }
+
         $liste[] = $eintrag;
 
         // HINWEIS v1.5.12 (bewusst NICHT geaendert - dokumentierte Grenze):
@@ -1130,9 +1184,11 @@ class BasketItemListener
             // Der lesbare Klartext steht in der Zusatzinfo ("text");
             // die Uebersetzung (mirka.warenkorb) macht die Info-Zeile im
             // Backend-Log ueberhaupt sichtbar.
-            $this->getLogger(self::LOG_KENNUNG)->info(
-                'MirkaBeltCalculator::mirka.warenkorb',
-                ['text' => '[MIRKA-KURZ] WARENKORB'
+            // NEU v1.6.9: Auf dem error-Kanal im KLARTEXT, damit JEDES
+            // zugelegte Band dauerhaft im Plenty-Log steht (bei 331204 waren
+            // die info-Zeilen nicht gespeichert - die Werte waren weg).
+            $this->getLogger(self::LOG_KENNUNG)->error(
+                '[MIRKA-KURZ] WARENKORB (keine Fehlermeldung)'
                     . ' | Qualitaet=' . $this->zettelWert($w, $cfg->getPropertyIdSchleifmittel())
                     . ' | Koernung='  . $this->zettelWert($w, $cfg->getPropertyIdKoernung())
                     . ' | Verbindung=' . $this->zettelWert($w, $cfg->getPropertyIdVerbindung())
@@ -1141,7 +1197,10 @@ class BasketItemListener
                     . ' | MirkaNr='   . $this->zettelWert($w, $cfg->getPropertyIdMirkaCode())
                     . ' | Preis(brutto)=' . (float) $preis
                     . ' | StueckProPack=' . ((int) $stueckProPack > 0 ? (int) $stueckProPack : '(unbekannt)')
-                    . ' | Session-Zettel=' . count($liste)]
+                    . ' | Session-Zettel=' . count($liste)
+                    . (isset($eintrag['eingabe']['laenge'])
+                        ? ' | Eingabe Kunde=' . $eintrag['eingabe']['breite'] . 'x' . $eintrag['eingabe']['laenge']
+                        : '')
             );
         } catch (\Throwable $egal) {
             // Sammelzeile ist reine Bequemlichkeit - Fehler ignorieren.

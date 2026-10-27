@@ -9,7 +9,27 @@ use Plenty\Plugin\Log\Loggable;
 use MirkaBeltCalculator\Configs\PluginConfig;
 
 /**
- * OrderRenameListener (v1.6.7)
+ * OrderRenameListener (v1.6.9)
+ *
+ * NEU v1.6.9 (27.10.2026): Positionsname mit " | " vor jedem Zeilenumbruch
+ *   (lesbar auch dort, wo Plenty/Mail den Umbruch verschluckt).
+ *
+ * NEU v1.6.8 (27.10.2026): ZUORDNUNG UEBER DIE MIRKA-ARTIKELNUMMER
+ *   Anlass: Auftraege 331203 und 331204 (27.10.2026) blieben leer, weil die
+ *   alte Regel "gleicher Preis = nicht entscheidbar" griff (zwei gleich
+ *   teure Baender bzw. dasselbe Band zweimal zugelegt).
+ *   Jetzt (Wunsch Bernd): Kennzeichen eines Bandes ist die Mirka-Nr.
+ *   (Eigenschaft 69). Die Sitzungs-Zettel werden nach Mirka-Nr. gebuendelt;
+ *   Positionen mit direkter Mirka-Nr. werden ueber die Nummer abgeglichen;
+ *   Positionen ohne Nummer bekommen ein Band nur, wenn die Mirka-Nummern
+ *   es eindeutig machen (eine Nummer, oder gleich viele Nummern wie gleich
+ *   teure Positionen bei gleicher Menge). Der Preis waehlt nur noch vor.
+ *   NEU: [MIRKA-RETTUNG] - bleibt eine Position leer, stehen ALLE nicht
+ *   zugeordneten Baender im Klartext im Log (Nachtragen ohne Kundenfrage).
+ *   NEU: [MIRKA-ZUORDNUNG] - jede Zuordnung wird mit Grund protokolliert.
+ *   Details: Methode uebernehmeZettelWerteRueckfall().
+ *
+ * Fruehere Fassung v1.6.7:
  *
  * NEU v1.6.7 (01.10.2026): EINKAUFSPREIS SOFORT SETZEN (Tab 9)
  *   Wunsch Bernd: Der EK soll nicht erst nach bis zu 15 Minuten von der
@@ -592,6 +612,7 @@ class OrderRenameListener
             // Schritt 3: Neue Namen bauen.
             // -----------------------------------------------------------
             $neueNamen = []; // orderItemId => neuer Name
+            $mirkaNrJeHaupt = []; // NEU v1.6.9: orderItemId => Mirka-Nr.
 
             foreach ($hauptPositionen as $hauptId => $position) {
                 $w = isset($werte[$hauptId]) ? $werte[$hauptId] : [];
@@ -646,21 +667,30 @@ class OrderRenameListener
 
                 // NEU v1.4.3: mehrzeiliger Aufbau (Wunsch Bernd) -
                 // jede Angabe in einer eigenen Zeile.
+                // NEU v1.6.9 (Wunsch Bernd 27.10.2026): Jede Zeile endet mit
+                // " | " VOR dem Zeilenumbruch. Manche Ansichten (z. B. die
+                // Bestellbestaetigungs-Mail) verschlucken den Umbruch - dann
+                // klebte alles zusammen ("AMass", "mmMirka-Nr."). Mit dem
+                // Trenner bleibt es in jeder Ansicht lesbar. Gleiches Format
+                // wie die Nachbestellungen der EK-Automatik (v1.9).
+                $trenner   = ' | ' . "\n";
                 $neuerName = 'Mirka Schleifband ' . $qualitaetsName
-                    . '(' . $code . ')' . "\n"
-                    . 'Körnung: P' . $grit . ' · Verbindung: ' . $joint . "\n"
+                    . '(' . $code . ')' . $trenner
+                    . 'Körnung: P' . $grit . ' · Verbindung: ' . $joint . $trenner
                     . 'Maß: ' . $breite . ' x ' . $laenge . ' mm'
-                    . ($mirkaNr !== '' ? "\n" . 'Mirka-Nr.: ' . $mirkaNr : '');
+                    . ($mirkaNr !== '' ? $trenner . 'Mirka-Nr.: ' . $mirkaNr : '');
 
                 // NEU v1.6.6: Verpackungseinheit anhaengen - nur wenn sie
                 // vom Zettel bekannt ist (keine Annahme, kein Standardwert).
                 $stueckProPack = isset($this->stueckProPackJeHaupt[(int) $hauptId])
                     ? (int) $this->stueckProPackJeHaupt[(int) $hauptId] : 0;
                 if ($stueckProPack > 0) {
-                    $neuerName .= "\n" . 'Inhalt: ' . $stueckProPack . ' Stück pro Pack';
+                    $neuerName .= $trenner . 'Inhalt: ' . $stueckProPack . ' Stück pro Pack';
                 }
 
                 $neueNamen[$hauptId] = $neuerName;
+                // NEU v1.6.9: Mirka-Nr. fuer die Externe Artikel-ID merken.
+                $mirkaNrJeHaupt[(int) $hauptId] = $mirkaNr;
 
                 // Eigenschafts-Unterzeilen bekommen "Name: Wert".
                 $zeilen = isset($zeilenJeHaupt[$hauptId]) ? $zeilenJeHaupt[$hauptId] : [];
@@ -790,6 +820,20 @@ class OrderRenameListener
                     . '. BITTE Auftrag ' . $auftragsId . ' SOFORT pruefen und '
                     . 'Tab 7 auf "NUR PROTOKOLLIEREN" stellen!');
             }
+
+            // NEU v1.6.9: Mirka-Nr. zusaetzlich als EXTERNE ARTIKEL-ID
+            // (Positions-Eigenschaft Typ 17) an jede Band-Position.
+            // Zweck: Nachbestell-Dokument und Wareneingang koennen die
+            // Mirka-Nr. als eigenes Feld anzeigen (die Variantennummer ist
+            // fuer alle Baender "SB-KONFIG" und an der Position nicht
+            // aenderbar - Plenty-Doku, Recherche 27.10.2026).
+            // Getestet 27.10.2026 per REST an Testauftrag 330419: Die
+            // Eigenschaft wird NUR gespeichert, wenn ALLE bisherigen
+            // Eigenschaften der Position mitgeschickt werden (ein einzelnes
+            // POST meldete OK, speicherte aber nichts). Deshalb: vorhandene
+            // Eigenschaften vollstaendig uebernehmen, Typ 17 ersetzen.
+            // Eigener Block: ein Fehler hier stoert weder Name noch Auftrag.
+            $this->setzeExterneArtikelId($orderRepo, $auftragsId, $mirkaNrJeHaupt);
         } catch (\Throwable $fehler) {
             // Bestellabschluss NIEMALS stoeren - nur loggen.
             $this->wichtig('[MIRKA-PROBLEM] Rename-FEHLER: ' . $fehler->getMessage());
@@ -1198,34 +1242,66 @@ class OrderRenameListener
      * @return bool
      */
     /**
-     * NEU v1.5.15: RUECKFALL ueber den Sitzungs-Zettel.
+     * NEU v1.6.8 (27.10.2026): ZUORDNUNG UEBER DIE MIRKA-ARTIKELNUMMER.
      *
-     * Der BasketItemListener legt beim In-den-Warenkorb-Legen einen
-     * "Zettel" in der Kunden-Sitzung ab (Schluessel 'mirkaKonfigListe'):
-     * die sechs Werte + der Brutto-Verkaufspreis. Diese Methode ordnet
-     * die Zettel den Auftragspositionen ueber den Preis zu.
+     * Anlass: Auftrag 331204 (27.10.2026). Zwei verschiedene Baender
+     * kosteten zufaellig gleich viel (99,43 EUR netto). Die alte Regel
+     * "gleicher Preis = nicht entscheidbar" hat deshalb BEIDE Positionen
+     * leer gelassen. Ebenso 331203: ein Band, aber zwei Zettel mit dem
+     * gleichen Preis (Kunde hat das Band zweimal zugelegt) -> leer.
      *
-     * WICHTIG - was diese Methode NICHT ist:
-     *   Der Preis ist KEIN Identitaetsbeweis. Die Zuordnung ist eine
-     *   Notversorgung, kein Nachweis. Deshalb gelten die strengen
-     *   Eindeutigkeitsregeln aus v1.5.12 unveraendert weiter:
-     *     - Haben MEHRERE Auftragspositionen denselben Bruttopreis,
-     *       bekommt KEINE davon einen Zettel.
-     *     - Passen MEHRERE Zettel auf denselben Positionspreis,
-     *       wird KEINER davon verwendet.
-     *     - Ist der Positionspreis nicht lesbar, wird nur der voellig
-     *       eindeutige Fall zugelassen (genau 1 Position, 1 Zettel).
-     *   In jedem Zweifelsfall passiert NICHTS und der Guard meldet die
-     *   unvollstaendige Position.
+     * Wunsch Bernd: Kennzeichen eines Bandes ist die von Mirka ermittelte
+     * Artikelnummer (Eigenschaft 69), NICHT der Preis. Gibt man die Nummer
+     * im Mirka-Partnerportal ein, kommt immer genau dasselbe Band heraus
+     * (bewiesen 07.09.2026: die Nummer enthaelt Qualitaet, Koernung,
+     * Breite und Laenge).
      *
-     * NEU v1.5.15 (Luecke geschlossen):
-     *   Die Schleife laeuft ueber ALLE Konfigurator-Positionen, auch ueber
-     *   die, die bereits 6/6 direkte Werte haben. Diese Positionen
-     *   VERBRAUCHEN ihren passenden Zettel, uebernehmen daraus aber
-     *   nichts. Ohne das koennte der liegen gebliebene Zettel einer
-     *   vollstaendigen Position A einer offenen Position B zugeordnet
-     *   werden - genau die Luecke, wegen der in v1.5.13 vorschnell der
-     *   ganze Rueckfall geloescht wurde.
+     * So arbeitet die Zuordnung jetzt:
+     *
+     *   1) Alle Zettel aus der Sitzung werden nach ihrer MIRKA-NUMMER
+     *      gebuendelt. Mehrere Zettel mit derselben Nummer sind EIN Band
+     *      (z. B. zweimal zugelegt oder ein alter Zettel desselben Bandes).
+     *      Widersprechen sich zwei Zettel mit derselben Nummer in den
+     *      uebrigen Werten, wird diese Nummer gesperrt (nichts geraten).
+     *
+     *   2) Hat eine Auftragsposition ihre Mirka-Nummer schon direkt,
+     *      wird das Band mit GENAU DIESER NUMMER verbraucht - ein echter
+     *      Nummernabgleich, der Preis spielt keine Rolle.
+     *
+     *   3) Positionen ohne Nummer: Die Auftragsposition selbst kennt beim
+     *      Anlegen nur Variante 22994, Menge und Preis - keine Nummer.
+     *      Der Preis dient deshalb NUR noch als Vorauswahl ("welche Baender
+     *      kommen ueberhaupt in Frage"). Entschieden wird ueber die
+     *      Mirka-Nummern:
+     *        - Nur EINE Nummer kommt in Frage (und es gibt mindestens so
+     *          viele Zettel dieser Nummer wie Positionen)
+     *          -> es ist dasselbe Band, alle Positionen bekommen es.
+     *        - Genau so viele VERSCHIEDENE Nummern wie Positionen, und alle
+     *          Positionen haben dieselbe Menge
+     *          -> jede Nummer wird genau einer Position gegeben. Mirka
+     *             bekommt damit garantiert jedes bestellte Band genau
+     *             einmal. Welche interne Positionsnummer welches Band
+     *             traegt, ist bei gleichem Preis und gleicher Menge
+     *             kaufmaennisch gleichwertig.
+     *        - Alles andere bleibt leer (fail-safe) und wird gemeldet.
+     *
+     *   4) RETTUNGSDATEN: Bleibt auch nur eine Position unvollstaendig,
+     *      werden ALLE nicht zugeordneten Zettel im Klartext ins Log
+     *      geschrieben ([MIRKA-RETTUNG]). Damit kann man das Band IMMER
+     *      von Hand nachtragen - der Kunde muss nicht gefragt werden.
+     *      (Bei 331204 waren die Werte in der Sitzung vorhanden, wurden
+     *      aber nirgends protokolliert. Das passiert jetzt nicht mehr.)
+     *
+     * Unveraendert:
+     *   - Direkte Werte sind fuehrend; der Zettel fuellt nur LEERE Felder.
+     *   - Keine Mischkonfiguration: hat eine Position schon Teilwerte, muss
+     *     der Zettel bei jedem davon denselben Wert tragen.
+     *   - Verbrauchte Zettel werden aus der Sitzung entfernt.
+     *
+     * Bekannte Grenze (ehrlich): Solange die Mirka-Nummer nicht schon im
+     * Warenkorb an der Position selbst klebt, bleibt der Sitzungs-Zettel
+     * die Quelle. Geht die Sitzung beim Login verloren, ist auch der
+     * Zettel weg. Dann greift der Guard (Meldung), aber keine Zuordnung.
      *
      * @param PluginConfig $config
      * @param array        $hauptPositionen  hauptId => Position
@@ -1241,14 +1317,7 @@ class OrderRenameListener
             $roh   = (string) $ablage->getValue('mirkaKonfigListe');
             $liste = ($roh !== '') ? json_decode($roh, true) : [];
 
-            // NEU v1.5.17: Beweis-Zeile zur Sitzung. Bei Auftrag 329694 war
-            // der Zettel um 13:42:16 geschrieben und um 13:42:52 nicht mehr
-            // lesbar - OHNE dass sich der Kunde ab-/angemeldet hatte. Diese
-            // Zeile trennt die moeglichen Ursachen sauber:
-            //   Ablage erreichbar + Laenge 0  -> Sitzung ist eine ANDERE
-            //                                    (oder der Wert wurde geleert)
-            //   Ablage NICHT erreichbar       -> beim Auftrag-Anlegen gibt es
-            //                                    ueberhaupt keine Kundensitzung
+            // Beweis-Zeile zur Sitzung (seit v1.5.17, unveraendert).
             $this->wichtig('[MIRKA-SESSION] Beim Auftrag-Anlegen: Sitzungsablage'
                 . ' erreichbar=ja | Zettel-Rohwert Laenge=' . strlen($roh)
                 . ' | Eintraege=' . (is_array($liste) ? count($liste) : 0)
@@ -1264,225 +1333,424 @@ class OrderRenameListener
                 return;
             }
 
-            $hauptIds = array_keys($hauptPositionen);
+            $mirkaId = (int) $config->getPropertyIdMirkaCode();
+
+            // ---------------------------------------------------------
+            // SCHRITT 1: Zettel nach Mirka-Nummer buendeln.
+            // $baender[nummer] = [
+            //     'werte' => [propId => Wert], 'preis' => float|null,
+            //     'stueckProPack' => int, 'indizes' => [Zettel-Indizes],
+            //     'gesperrt' => bool ]
+            // ---------------------------------------------------------
+            $baender = [];
+            $ohneNummer = 0;
+            foreach ($liste as $i => $zettel) {
+                if (!is_array($zettel)) {
+                    continue;
+                }
+                $zWerte = (isset($zettel['werte']) && is_array($zettel['werte']))
+                    ? $zettel['werte'] : [];
+                $nummer = isset($zWerte[(string) $mirkaId])
+                    ? trim((string) $zWerte[(string) $mirkaId]) : '';
+                if ($nummer === '') {
+                    $ohneNummer++;
+                    continue;
+                }
+                $zPreis = isset($zettel['preis']) ? (float) $zettel['preis'] : null;
+                $zSpp   = isset($zettel['stueckProPack']) ? (int) $zettel['stueckProPack'] : 0;
+
+                if (!isset($baender[$nummer])) {
+                    $baender[$nummer] = [
+                        'werte'         => $zWerte,
+                        'preis'         => $zPreis,
+                        'stueckProPack' => $zSpp,
+                        'indizes'       => [],
+                        'gesperrt'      => false,
+                    ];
+                } else {
+                    // Gleiche Nummer muss dasselbe Band sein. Widerspricht
+                    // ein Wert, wird diese Nummer gesperrt - nichts raten.
+                    $widerspruch = $this->vergleicheZettelWerte($baender[$nummer]['werte'], $zWerte);
+                    if ($widerspruch !== '') {
+                        $baender[$nummer]['gesperrt'] = true;
+                        $this->wichtig('[MIRKA-PROBLEM] Zwei Zettel mit derselben Mirka-Nr. '
+                            . $nummer . ' widersprechen sich (' . $widerspruch . ') - '
+                            . 'diese Nummer wird NICHT zugeordnet.');
+                    }
+                    // Juengster Zettel (hoeherer Index) liefert Verpackungseinheit,
+                    // falls der aeltere sie nicht kannte.
+                    if ($zSpp > 0) {
+                        $baender[$nummer]['stueckProPack'] = $zSpp;
+                    }
+                    if ($baender[$nummer]['preis'] === null && $zPreis !== null) {
+                        $baender[$nummer]['preis'] = $zPreis;
+                    }
+                }
+                $baender[$nummer]['indizes'][] = $i;
+            }
+
+            if ($ohneNummer > 0) {
+                $this->diag('[DIAG][Rename] ' . $ohneNummer . ' Zettel ohne Mirka-Nr. '
+                    . 'werden nicht verwendet (eine Zuordnung ist nur ueber die Nummer erlaubt).');
+            }
+
+            $verbraucht = [];   // nummer => true
+            $hauptIds   = array_keys($hauptPositionen);
             sort($hauptIds);
 
-            $benutzteIndizes = [];
-
-            // Vorab zaehlen, wie viele Hauptpositionen JEWEILS denselben
-            // Bruttopreis haben (Eindeutigkeit der Positions-Seite).
-            $preisAnzahlPositionen = [];
-            foreach ($hauptIds as $zaehlId) {
-                $zaehlPreis = $this->leseBruttoEinzelpreis($hauptPositionen[$zaehlId]);
-                if ($zaehlPreis !== null) {
-                    $schluessel = (string) round((float) $zaehlPreis, 2);
-                    if (!isset($preisAnzahlPositionen[$schluessel])) {
-                        $preisAnzahlPositionen[$schluessel] = 0;
+            // ---------------------------------------------------------
+            // SCHRITT 2: Positionen MIT direkter Mirka-Nummer -> echter
+            // Nummernabgleich.
+            // ---------------------------------------------------------
+            $ohneDirekteNummer = [];
+            foreach ($hauptIds as $hauptId) {
+                $wVorhanden   = isset($werte[$hauptId]) ? $werte[$hauptId] : [];
+                $nummerDirekt = $this->holeWert($wVorhanden, $mirkaId);
+                if ($nummerDirekt === '') {
+                    $ohneDirekteNummer[] = $hauptId;
+                    continue;
+                }
+                if (isset($baender[$nummerDirekt]) && !$baender[$nummerDirekt]['gesperrt']) {
+                    $verbraucht[$nummerDirekt] = true;
+                    $this->merkeStueckProPack($hauptId, $baender[$nummerDirekt]);
+                    if (!$this->hatAlleSechsWerte($config, $wVorhanden)) {
+                        $this->ergaenzeAusBand($config, $hauptId, $nummerDirekt,
+                            $baender[$nummerDirekt], $werte, 'Mirka-Nr. direkt an der Position');
                     }
-                    $preisAnzahlPositionen[$schluessel]++;
+                } elseif (!$this->hatAlleSechsWerte($config, $wVorhanden)) {
+                    $this->wichtig('[MIRKA-PROBLEM] Position ' . (int) $hauptId
+                        . ' traegt Mirka-Nr. ' . $nummerDirekt
+                        . ', aber es gibt keinen (gueltigen) Zettel mit dieser Nummer.');
                 }
             }
 
-            foreach ($hauptIds as $hauptId) {
-                $position = $hauptPositionen[$hauptId];
-                $posPreis = $this->leseBruttoEinzelpreis($position);
+            // ---------------------------------------------------------
+            // SCHRITT 3: Positionen OHNE Nummer. Der Preis waehlt nur vor,
+            // welche Baender ueberhaupt in Frage kommen; entschieden wird
+            // ueber die Mirka-Nummern.
+            // ---------------------------------------------------------
+            $gruppen = [];   // preisSchluessel => [hauptId, ...]
+            foreach ($ohneDirekteNummer as $hauptId) {
+                $posPreis  = $this->leseBruttoEinzelpreis($hauptPositionen[$hauptId]);
+                $schluessel = ($posPreis !== null)
+                    ? (string) round((float) $posPreis, 2) : 'unlesbar';
+                if (!isset($gruppen[$schluessel])) {
+                    $gruppen[$schluessel] = [];
+                }
+                $gruppen[$schluessel][] = $hauptId;
+            }
 
-                // Wie viele Werte hat die Position ueber den direkten Weg
-                // schon? 0 = leer, 6 = vollstaendig, 1-5 = Teilwerte.
-                $wVorhanden = isset($werte[$hauptId]) ? $werte[$hauptId] : [];
-                $anzahlDirekt      = $this->zaehleDirekteWerte($config, $wVorhanden);
-                $schonVollstaendig = ($anzahlDirekt >= 6);
-                // NEU v1.5.16 (BLOCKER-FIX): Bei 1-5 direkten Werten wird der
-                // Zettel NICHT zum Auffuellen benutzt. Sonst koennte ein
-                // fremder, preisgleicher Zettel die leeren Felder ergaenzen
-                // und es entstuende eine MISCHKONFIGURATION aus zwei
-                // verschiedenen Baendern, die anschliessend als saubere 6/6
-                // durchgeht (Guard meldet "OK"). Lieber sichtbar
-                // unvollstaendig als unsichtbar gemischt.
-                // v1.5.22 (Regressions-Korrektur): Frueher stand hier
-                // ($anzahlDirekt > 0). Damit blieb eine Position mit 1-5
-                // direkten Werten OHNE Zettel-Ergaenzung - v1.5.12 haette
-                // sie vervollstaendigt. Das war eine Verschlechterung
-                // gegenueber dem alten Stand. Stumm bleiben die Meldungen
-                // jetzt nur noch bei einer bereits vollstaendigen Position;
-                // der Teilwert-Fall wird weiter unten sauber geloest, indem
-                // die vorhandenen Werte mit dem Zettel VERGLICHEN werden.
-                $nurVerbrauchen = $schonVollstaendig;
-
-                $gewaehlterIndex = -1;
-
-                if ($posPreis !== null) {
-                    // Positions-Seite eindeutig?
-                    $preisSchluessel = (string) round((float) $posPreis, 2);
-                    $anzahlPositionenMitPreis = isset($preisAnzahlPositionen[$preisSchluessel])
-                        ? $preisAnzahlPositionen[$preisSchluessel] : 0;
-                    if ($anzahlPositionenMitPreis > 1) {
-                        if (!$nurVerbrauchen) {
-                            $this->wichtig('[MIRKA-PROBLEM] Zettel-Zuordnung mehrdeutig'
-                                . ' | Hauptposition=' . (int) $hauptId
-                                . ' | Positionspreis=' . $posPreis
-                                . ' | HauptpositionenMitDiesemPreis=' . $anzahlPositionenMitPreis
-                                . ' | Es wurden KEINE Werte uebernommen'
-                                . ' (fail-safe: bei gleichem Preis ist nicht beweisbar,'
-                                . ' welcher Zettel zu welcher Position gehoert).');
-                        }
+            foreach ($gruppen as $schluessel => $gruppenIds) {
+                // Kandidaten: noch nicht verbrauchte, nicht gesperrte Baender
+                // mit passendem Preis (bei unlesbarem Preis: alle).
+                $kandidaten = [];
+                foreach ($baender as $nummer => $band) {
+                    if (isset($verbraucht[$nummer]) || $band['gesperrt']) {
                         continue;
                     }
-
-                    // Zettel-Seite eindeutig? ALLE passenden zaehlen,
-                    // NICHT beim ersten Treffer abbrechen.
-                    $treffer = [];
-                    for ($i = count($liste) - 1; $i >= 0; $i--) {
-                        if (isset($benutzteIndizes[$i])) {
+                    if ($schluessel !== 'unlesbar') {
+                        if ($band['preis'] === null) {
                             continue;
                         }
-                        $zettelPreis = isset($liste[$i]['preis'])
-                            ? (float) $liste[$i]['preis'] : null;
-                        if ($zettelPreis !== null) {
-                            // Betrag OHNE abs() - in der Plenty-Sandbox verboten.
-                            $differenz = $zettelPreis - $posPreis;
-                            if ($differenz < 0) {
-                                $differenz = -$differenz;
-                            }
-                            if ($differenz < 0.005) {
-                                $treffer[] = $i;
-                            }
+                        // Betrag OHNE abs() - in der Plenty-Sandbox verboten.
+                        $differenz = (float) $band['preis'] - (float) $schluessel;
+                        if ($differenz < 0) {
+                            $differenz = -$differenz;
+                        }
+                        if ($differenz >= 0.005) {
+                            continue;
                         }
                     }
+                    $kandidaten[] = (string) $nummer;
+                }
+                sort($kandidaten);
+                sort($gruppenIds);
 
-                    if (count($treffer) === 1) {
-                        $gewaehlterIndex = $treffer[0];
-                    } elseif (count($treffer) > 1) {
-                        if (!$nurVerbrauchen) {
-                            $this->wichtig('[MIRKA-PROBLEM] Zettel-Zuordnung mehrdeutig'
-                                . ' | Hauptposition=' . (int) $hauptId
-                                . ' | Positionspreis=' . $posPreis
-                                . ' | passende Session-Zettel=' . count($treffer)
-                                . ' | Es wurden KEINE Werte uebernommen'
-                                . ' (fail-safe, sonst koennten die Baender vertauscht werden).');
-                        }
-                        continue;
-                    }
+                $anzahlPos   = count($gruppenIds);
+                $anzahlBand  = count($kandidaten);
+                $zuordnung   = [];   // hauptId => nummer
+                $begruendung = '';
 
-                    if ($gewaehlterIndex < 0) {
-                        if (!$nurVerbrauchen) {
-                            $this->wichtig('[MIRKA-PROBLEM] Kein Zettel passt zum '
-                                . 'Positionspreis ' . $posPreis . ' (Haupt ' . (int) $hauptId
-                                . ') - Position wird uebersprungen (fail-safe).');
-                        }
-                        continue;
+                if ($anzahlBand === 1
+                    && count($baender[$kandidaten[0]]['indizes']) >= $anzahlPos) {
+                    // Dasselbe Band (eine Nummer) fuer alle Positionen.
+                    foreach ($gruppenIds as $hId) {
+                        $zuordnung[$hId] = $kandidaten[0];
                     }
+                    $begruendung = ($anzahlPos === 1)
+                        ? 'eine Mirka-Nr. passt'
+                        : 'dieselbe Mirka-Nr. ' . $anzahlPos . 'x zugelegt';
+                } elseif ($anzahlBand === $anzahlPos && $anzahlPos > 1
+                    && $this->gleicheMenge($hauptPositionen, $gruppenIds)) {
+                    // Gleich viele verschiedene Nummern wie Positionen.
+                    foreach ($gruppenIds as $k => $hId) {
+                        $zuordnung[$hId] = $kandidaten[$k];
+                    }
+                    $begruendung = $anzahlPos . ' verschiedene Mirka-Nr. fuer '
+                        . $anzahlPos . ' gleich teure Positionen mit gleicher Menge '
+                        . '(jedes Band genau einmal, Reihenfolge kaufmaennisch gleichwertig)';
                 } else {
-                    // Preis nicht lesbar: nur den voellig eindeutigen Fall.
-                    if (count($hauptIds) === 1 && count($liste) === 1) {
-                        $gewaehlterIndex = 0;
-                        $this->diag('[DIAG][Rename] Positionspreis nicht lesbar - '
-                            . 'eindeutiger Fall (1 Position, 1 Zettel), Zettel wird verwendet.');
-                    } else {
-                        if (!$nurVerbrauchen) {
-                            $this->wichtig('[MIRKA-PROBLEM] Positionspreis nicht lesbar und '
-                                . 'Lage mehrdeutig (' . count($hauptIds) . ' Position(en), '
-                                . count($liste) . ' Zettel) - uebersprungen (fail-safe).');
-                        }
-                        continue;
+                    $beschreibung = [];
+                    foreach ($kandidaten as $nr) {
+                        $beschreibung[] = $this->beschreibeBand($config, $nr, $baender[$nr]);
                     }
-                }
-
-                // Zettel ist zugeordnet -> in JEDEM Fall als verbraucht
-                // markieren, auch wenn die Position ihn nicht braucht.
-                $benutzteIndizes[$gewaehlterIndex] = true;
-
-                // NEU v1.6.6: Verpackungseinheit vom zugeordneten Zettel
-                // merken - auch dann, wenn die sechs Werte schon direkt da
-                // sind (der Zettel ist trotzdem eindeutig dieser Position
-                // zugeordnet).
-                if (isset($liste[$gewaehlterIndex]['stueckProPack'])
-                    && (int) $liste[$gewaehlterIndex]['stueckProPack'] > 0) {
-                    $this->stueckProPackJeHaupt[(int) $hauptId] =
-                        (int) $liste[$gewaehlterIndex]['stueckProPack'];
-                }
-
-                if ($schonVollstaendig) {
-                    $this->diag('[DIAG][Rename] Haupt ' . (int) $hauptId
-                        . ' hat bereits 6/6 direkte Werte - Zettel wird nur '
-                        . 'verbraucht, NICHT uebernommen.');
+                    $this->wichtig('[MIRKA-PROBLEM] Zuordnung ueber Mirka-Nr. nicht eindeutig'
+                        . ' | Positionen=' . implode(',', $gruppenIds)
+                        . ' | Preis(brutto)=' . $schluessel
+                        . ' | in Frage kommende Baender=' . $anzahlBand
+                        . ($anzahlBand > 0 ? ' || ' . implode(' || ', $beschreibung) : '')
+                        . ' | Es wurden KEINE Werte uebernommen (fail-safe).');
                     continue;
                 }
 
-                $eintrag  = $liste[$gewaehlterIndex];
-                $werteMap = (isset($eintrag['werte']) && is_array($eintrag['werte']))
-                    ? $eintrag['werte']
-                    : [];
-                // v1.5.22 - SCHUTZ GEGEN MISCHKONFIGURATION, ohne den
-                // Normalfall zu blockieren:
-                // Hat die Position schon einzelne direkte Werte (1-5), muss
-                // der Zettel bei JEDEM davon denselben Wert tragen. Stimmt
-                // auch nur einer nicht ueberein, gehoert der Zettel
-                // offensichtlich zu einem ANDEREN Band - dann wird nichts
-                // ergaenzt und laut gemeldet. Stimmen alle ueberein, ist die
-                // Zugehoerigkeit belegt und die Luecken werden gefuellt.
-                if ($anzahlDirekt > 0) {
-                    $konflikte = [];
-                    foreach ($werteMap as $vPropertyId => $vWert) {
-                        $vPid = (int) $vPropertyId;
-                        if ($vPid <= 0) {
-                            continue;
-                        }
-                        $direkt = isset($werte[$hauptId][$vPid])
-                            ? trim((string) $werte[$hauptId][$vPid]) : '';
-                        $ausZettel = trim((string) $vWert);
-                        if ($direkt !== '' && $ausZettel !== '' && $direkt !== $ausZettel) {
-                            $konflikte[] = 'Eigenschaft ' . $vPid . ': direkt "'
-                                . $direkt . '" vs. Zettel "' . $ausZettel . '"';
-                        }
-                    }
-                    if (count($konflikte) > 0) {
-                        $this->wichtig('[MIRKA-PROBLEM] Der Sitzungs-Zettel widerspricht '
-                            . 'den direkten Werten der Position ' . (int) $hauptId
-                            . ' - er gehoert offensichtlich zu einem ANDEREN Band und '
-                            . 'wird NICHT verwendet (sonst entstuende eine '
-                            . 'Mischkonfiguration). Abweichungen: '
-                            . implode(' | ', $konflikte));
-                        continue;
-                    }
-                    $this->diag('[DIAG][Rename] Haupt ' . (int) $hauptId . ': '
-                        . $anzahlDirekt . '/6 direkte Werte stimmen mit dem Zettel '
-                        . 'ueberein - die fehlenden werden ergaenzt.');
-                }
-
-                $ergaenzt = 0;
-                foreach ($werteMap as $propertyId => $wert) {
-                    $pid  = (int) $propertyId;
-                    $wneu = trim((string) $wert);
-                    // Direkte Werte sind fuehrend: nur LEERE Felder fuellen.
-                    $nochLeer = !isset($werte[$hauptId][$pid])
-                        || trim((string) $werte[$hauptId][$pid]) === '';
-                    if ($pid > 0 && $wneu !== '' && $nochLeer) {
-                        $werte[$hauptId][$pid] = $wneu;
-                        $ergaenzt++;
+                foreach ($zuordnung as $hId => $nr) {
+                    $ok = $this->ergaenzeAusBand($config, $hId, $nr, $baender[$nr], $werte, $begruendung);
+                    if ($ok) {
+                        $verbraucht[$nr] = true;
+                        $this->merkeStueckProPack($hId, $baender[$nr]);
                     }
                 }
-                $this->diag('[DIAG][Rename] Werte ergaenzt (Z(Sitzungs-Zettel, Rueckfall)): '
-                    . $ergaenzt . ' Wert(e) fuer Haupt ' . (int) $hauptId
-                    . ' (Zettel-Preis: '
-                    . (isset($eintrag['preis']) ? $eintrag['preis'] : '?')
-                    . ', Positionspreis: ' . ($posPreis !== null ? $posPreis : 'nicht lesbar')
-                    . ')');
             }
 
-            // Nur die tatsaechlich verbrauchten Zettel entfernen.
-            if (count($benutzteIndizes) > 0) {
+            // ---------------------------------------------------------
+            // SCHRITT 4: RETTUNGSDATEN. Fehlt noch irgendwo etwas, alle
+            // nicht zugeordneten Zettel im Klartext protokollieren.
+            // ---------------------------------------------------------
+            $nochUnvollstaendig = [];
+            foreach ($hauptIds as $hId) {
+                $w = isset($werte[$hId]) ? $werte[$hId] : [];
+                if (!$this->hatAlleSechsWerte($config, $w)) {
+                    $nochUnvollstaendig[] = $hId;
+                }
+            }
+            if (count($nochUnvollstaendig) > 0) {
                 $rest = [];
-                foreach ($liste as $i => $eintrag) {
-                    if (!isset($benutzteIndizes[$i])) {
-                        $rest[] = $eintrag;
+                foreach ($baender as $nummer => $band) {
+                    if (!isset($verbraucht[$nummer])) {
+                        $rest[] = $this->beschreibeBand($config, (string) $nummer, $band);
                     }
                 }
-                $ablage->setValue('mirkaKonfigListe', count($rest) > 0 ? json_encode($rest) : '');
+                $this->wichtig('[MIRKA-RETTUNG] Unvollstaendige Position(en) '
+                    . implode(',', $nochUnvollstaendig)
+                    . ' | nicht zugeordnete Baender aus der Sitzung=' . count($rest)
+                    . (count($rest) > 0 ? ' || ' . implode(' || ', $rest) : '')
+                    . ' | Damit kann die Position von Hand nachgetragen werden.');
+            }
+
+            // ---------------------------------------------------------
+            // SCHRITT 5: Verbrauchte Zettel (alle Zettel der verbrauchten
+            // Nummern) aus der Sitzung entfernen.
+            // ---------------------------------------------------------
+            if (count($verbraucht) > 0) {
+                $entfernen = [];
+                foreach ($verbraucht as $nummer => $egal) {
+                    foreach ($baender[$nummer]['indizes'] as $idx) {
+                        $entfernen[$idx] = true;
+                    }
+                }
+                $neu = [];
+                foreach ($liste as $i => $eintrag) {
+                    if (!isset($entfernen[$i])) {
+                        $neu[] = $eintrag;
+                    }
+                }
+                $ablage->setValue('mirkaKonfigListe', count($neu) > 0 ? json_encode($neu) : '');
             }
         } catch (\Throwable $fehler) {
             // Der Rueckfall darf den Auftrag NIEMALS stoeren.
             $this->wichtig('[MIRKA-PROBLEM] Zettel-Rueckfall fehlgeschlagen: '
+                . $fehler->getMessage());
+        }
+    }
+
+    /**
+     * NEU v1.6.8: Ergaenzt die LEEREN Felder einer Position aus einem Band
+     * (Zettel-Buendel). Hat die Position schon Teilwerte, muessen ALLE davon
+     * mit dem Band uebereinstimmen - sonst wird nichts ergaenzt
+     * (Schutz gegen Mischkonfiguration, Regel aus v1.5.22).
+     *
+     * @return bool  true = Band passt zur Position (verbraucht)
+     */
+    private function ergaenzeAusBand($config, $hauptId, $nummer, $band, &$werte, $begruendung)
+    {
+        $werteMap = (isset($band['werte']) && is_array($band['werte'])) ? $band['werte'] : [];
+
+        $konflikte = [];
+        foreach ($werteMap as $vPropertyId => $vWert) {
+            $vPid = (int) $vPropertyId;
+            if ($vPid <= 0) {
+                continue;
+            }
+            $direkt = isset($werte[$hauptId][$vPid]) ? trim((string) $werte[$hauptId][$vPid]) : '';
+            $ausBand = trim((string) $vWert);
+            if ($direkt !== '' && $ausBand !== '' && $direkt !== $ausBand) {
+                $konflikte[] = 'Eigenschaft ' . $vPid . ': Position "' . $direkt
+                    . '" vs. Zettel "' . $ausBand . '"';
+            }
+        }
+        if (count($konflikte) > 0) {
+            $this->wichtig('[MIRKA-PROBLEM] Band Mirka-Nr. ' . $nummer
+                . ' widerspricht den vorhandenen Werten der Position ' . (int) $hauptId
+                . ' - es wird NICHT verwendet. Abweichungen: ' . implode(' | ', $konflikte));
+            return false;
+        }
+
+        $ergaenzt = 0;
+        foreach ($werteMap as $propertyId => $wert) {
+            $pid  = (int) $propertyId;
+            $wneu = trim((string) $wert);
+            $nochLeer = !isset($werte[$hauptId][$pid]) || trim((string) $werte[$hauptId][$pid]) === '';
+            if ($pid > 0 && $wneu !== '' && $nochLeer) {
+                $werte[$hauptId][$pid] = $wneu;
+                $ergaenzt++;
+            }
+        }
+        $this->wichtig('[MIRKA-ZUORDNUNG] Position ' . (int) $hauptId
+            . ' <- Mirka-Nr. ' . $nummer . ' | ' . $ergaenzt . ' Wert(e) ergaenzt'
+            . ' | Grund: ' . $begruendung);
+        return true;
+    }
+
+    /**
+     * NEU v1.6.8: Vergleicht die Werte zweier Zettel. Leerer Text = gleich,
+     * sonst eine kurze Beschreibung der ersten Abweichung.
+     */
+    private function vergleicheZettelWerte($a, $b)
+    {
+        foreach ($b as $pid => $wert) {
+            $wa = isset($a[$pid]) ? trim((string) $a[$pid]) : '';
+            $wb = trim((string) $wert);
+            if ($wa !== '' && $wb !== '' && $wa !== $wb) {
+                return 'Eigenschaft ' . (int) $pid . ': "' . $wa . '" vs. "' . $wb . '"';
+            }
+        }
+        return '';
+    }
+
+    /**
+     * NEU v1.6.8: Haben alle genannten Positionen dieselbe Menge?
+     * Nur dann ist es kaufmaennisch egal, welches gleich teure Band auf
+     * welcher Position steht. Unlesbare Menge = NEIN (fail-safe).
+     */
+    private function gleicheMenge($hauptPositionen, $ids)
+    {
+        $erste = null;
+        foreach ($ids as $hId) {
+            $menge = null;
+            try {
+                $menge = (float) $hauptPositionen[$hId]->quantity;
+            } catch (\Throwable $egal) {
+                $menge = null;
+            }
+            if ($menge === null || $menge <= 0) {
+                return false;
+            }
+            if ($erste === null) {
+                $erste = $menge;
+            } elseif ($menge !== $erste) {
+                return false;
+            }
+        }
+        return $erste !== null;
+    }
+
+    /**
+     * NEU v1.6.8: Verpackungseinheit eines zugeordneten Bandes merken
+     * (fuer die Namenszeile "Inhalt: X Stueck pro Pack").
+     */
+    private function merkeStueckProPack($hauptId, $band)
+    {
+        if (isset($band['stueckProPack']) && (int) $band['stueckProPack'] > 0) {
+            $this->stueckProPackJeHaupt[(int) $hauptId] = (int) $band['stueckProPack'];
+        }
+    }
+
+    /**
+     * NEU v1.6.8: Klartext-Beschreibung eines Bandes fuer das Log
+     * (Rettungsdaten - damit nie wieder Daten verloren gehen).
+     */
+    private function beschreibeBand($config, $nummer, $band)
+    {
+        $w = (isset($band['werte']) && is_array($band['werte'])) ? $band['werte'] : [];
+        return 'Mirka-Nr=' . $nummer
+            . ', Qualitaet=' . $this->holeWert($w, $config->getPropertyIdSchleifmittel())
+            . ', Koernung=' . $this->holeWert($w, $config->getPropertyIdKoernung())
+            . ', Verbindung=' . $this->holeWert($w, $config->getPropertyIdVerbindung())
+            . ', Breite=' . $this->holeWert($w, $config->getPropertyIdBreite())
+            . ', Laenge=' . $this->holeWert($w, $config->getPropertyIdLaenge())
+            . ', Preis(brutto)=' . (isset($band['preis']) && $band['preis'] !== null ? $band['preis'] : '?')
+            . ', StueckProPack=' . (isset($band['stueckProPack']) ? (int) $band['stueckProPack'] : 0)
+            . ', Zettel=' . (isset($band['indizes']) ? count($band['indizes']) : 0);
+    }
+
+    /**
+     * NEU v1.6.9: Schreibt die Mirka-Nr. als Externe Artikel-ID (Typ 17)
+     * an die Band-Positionen und liest danach zurueck.
+     *
+     * @param OrderRepositoryContract $orderRepo
+     * @param int                     $auftragsId
+     * @param array                   $mirkaNrJeHaupt  orderItemId => Mirka-Nr.
+     */
+    private function setzeExterneArtikelId($orderRepo, $auftragsId, $mirkaNrJeHaupt)
+    {
+        if (!is_array($mirkaNrJeHaupt) || count($mirkaNrJeHaupt) === 0) {
+            return;
+        }
+        try {
+            $auftrag = $orderRepo->findOrderById($auftragsId, ['amounts', 'orderItems', 'orderItems.properties']);
+            $betragVorher = $this->leseRechnungsbetrag($auftrag);
+            $payload = [];
+            foreach ($auftrag->orderItems as $position) {
+                $id = (int) $position->id;
+                $eintrag = ['id' => $id, 'orderItemName' => (string) $position->orderItemName];
+                if (isset($mirkaNrJeHaupt[$id]) && trim((string) $mirkaNrJeHaupt[$id]) !== '') {
+                    $eigenschaften = [];
+                    foreach ($position->properties as $eig) {
+                        $typ = (int) $eig->typeId;
+                        if ($typ > 0 && $typ !== 17) {
+                            $eigenschaften[] = ['typeId' => $typ, 'value' => (string) $eig->value];
+                        }
+                    }
+                    $eigenschaften[] = ['typeId' => 17, 'value' => trim((string) $mirkaNrJeHaupt[$id])];
+                    $eintrag['properties'] = $eigenschaften;
+                }
+                $payload[] = $eintrag;
+            }
+            $orderRepo->updateOrder(['orderItems' => $payload], $auftragsId);
+
+            // Zuruecklesen: HTTP-/Methoden-Erfolg ist kein Beweis.
+            $kontrolle = $orderRepo->findOrderById($auftragsId, ['amounts', 'orderItems', 'orderItems.properties']);
+            $ok = 0;
+            $fehlt = [];
+            foreach ($kontrolle->orderItems as $position) {
+                $id = (int) $position->id;
+                if (!isset($mirkaNrJeHaupt[$id])) {
+                    continue;
+                }
+                $gefunden = false;
+                foreach ($position->properties as $eig) {
+                    if ((int) $eig->typeId === 17
+                        && trim((string) $eig->value) === trim((string) $mirkaNrJeHaupt[$id])) {
+                        $gefunden = true;
+                    }
+                }
+                if ($gefunden) {
+                    $ok++;
+                } else {
+                    $fehlt[] = $id;
+                }
+            }
+            $betragNachher = $this->leseRechnungsbetrag($kontrolle);
+            if (count($fehlt) === 0 && $betragVorher === $betragNachher) {
+                $this->diag('[DIAG][Rename] Externe Artikel-ID (Mirka-Nr.) an ' . $ok
+                    . ' Position(en) gesetzt und zurueckgelesen.');
+            } else {
+                $this->wichtig('[MIRKA-PROBLEM] Externe Artikel-ID nicht vollstaendig gesetzt'
+                    . ' | Auftrag ' . $auftragsId . ' | fehlt bei: ' . implode(',', $fehlt)
+                    . ' | Betrag vorher=' . $betragVorher . ' nachher=' . $betragNachher);
+            }
+        } catch (\Throwable $fehler) {
+            $this->wichtig('[MIRKA-PROBLEM] Externe Artikel-ID konnte nicht gesetzt werden: '
                 . $fehler->getMessage());
         }
     }
