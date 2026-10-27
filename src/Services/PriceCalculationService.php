@@ -8,6 +8,7 @@ use Plenty\Plugin\Log\Loggable;
 /**
  * PriceCalculationService (v1.0.9, ergaenzt in v1.6.6)
  *
+ * NEU v1.6.9: Rueckgabe enthaelt 'mirkaNr', 'mirkaBreite', 'mirkaLaenge', 'produktName'.
  * NEU v1.6.6: Rueckgabe enthaelt 'stueckProPack' (Baender pro Pack) oder null.
  *
  * KEIN Constructor mehr. Abhaengigkeiten werden in calculate() per
@@ -105,6 +106,11 @@ class PriceCalculationService
             'source'             => $source,
             'detail'             => $detail,
             'stueckProPack'      => $stueckProPack,
+            // NEU v1.6.9: Mirka-Nr. und ECHTE Mirka-Masse (0/'' = unbekannt).
+            'mirkaNr'            => isset($apiResult['mirkaNr']) ? (string) $apiResult['mirkaNr'] : '',
+            'mirkaBreite'        => isset($apiResult['mirkaBreite']) ? (int) $apiResult['mirkaBreite'] : 0,
+            'mirkaLaenge'        => isset($apiResult['mirkaLaenge']) ? (int) $apiResult['mirkaLaenge'] : 0,
+            'produktName'        => isset($apiResult['produktName']) ? (string) $apiResult['produktName'] : '',
         ];
     }
 }

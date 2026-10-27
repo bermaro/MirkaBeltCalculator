@@ -9,6 +9,8 @@ use MirkaBeltCalculator\Configs\PluginConfig;
 /**
  * MirkaApiClient (v1.3.1, ergaenzt in v1.6.6)
  *
+ * NEU v1.6.9: Zusaetzlich 'mirkaNr', 'mirkaBreite', 'mirkaLaenge' (aus dem
+ * Mirka-Produktnamen, z. B. "150x7200mm") und 'produktName'.
  * NEU v1.6.6: Im Erfolgsfall wird zusaetzlich 'beltsPerPack' (Baender pro
  * Verpackungseinheit) aus der Cloud-Function-Antwort zurueckgegeben.
  *
@@ -193,11 +195,25 @@ class MirkaApiClient
                     $beltsPerPack = (int) $data['beltsPerPack'];
                 }
 
+                // NEU v1.6.9: Mirka-Artikelnummer und die ECHTEN Mirka-Masse
+                // mitgeben. Mirka rastet krumme Laengen auf ein Raster ein
+                // (gemessen 27.10.2026: 7190 bis 7210 mm -> alles
+                // "150x7200mm", Nummer 444CG00180QP). Geliefert wird das
+                // Band laut Produktname - DAS muss im Auftrag stehen.
+                $mirkaNr = isset($data['mirkaProductCode']) ? trim((string) $data['mirkaProductCode']) : '';
+                $masse   = $this->leseMasseAusProduktname(
+                    isset($data['productName']) ? (string) $data['productName'] : ''
+                );
+
                 return [
                     'uvp'          => $uvp,
                     'source'       => 'api',
                     'detail'       => 'Mirka-UVP ' . number_format($uvp, 2) . ' EUR',
                     'beltsPerPack' => $beltsPerPack,
+                    'mirkaNr'      => $mirkaNr,
+                    'mirkaBreite'  => $masse['breite'],
+                    'mirkaLaenge'  => $masse['laenge'],
+                    'produktName'  => isset($data['productName']) ? (string) $data['productName'] : '',
                 ];
             }
 
@@ -245,5 +261,44 @@ class MirkaApiClient
             );
             return ['uvp' => null, 'source' => 'error', 'detail' => 'Exception: ' . $t->getMessage()];
         }
+    }
+    /**
+     * NEU v1.6.9: Liest Breite und Laenge aus dem Mirka-Produktnamen,
+     * z. B. "JEPUFLEX ANTISTATIC 150x7200mm P80, 10/Pack" -> 150 / 7200.
+     * Bewusst OHNE regulaere Ausdruecke (nur einfache Textfunktionen,
+     * Plenty-Sandbox). Nicht lesbar -> beide Werte 0 (dann bleibt die
+     * Eingabe des Kunden stehen - es wird nichts geraten).
+     *
+     * @param string $name
+     * @return array ['breite' => int, 'laenge' => int]
+     */
+    private function leseMasseAusProduktname($name)
+    {
+        $leer = ['breite' => 0, 'laenge' => 0];
+        $name = (string) $name;
+        if ($name === '') {
+            return $leer;
+        }
+        foreach (explode(' ', $name) as $wort) {
+            $wort = trim($wort);
+            $laengeWort = strlen($wort);
+            // Gesucht: <Zahl>x<Zahl>mm
+            if ($laengeWort < 6 || substr($wort, $laengeWort - 2) !== 'mm') {
+                continue;
+            }
+            $kern  = substr($wort, 0, $laengeWort - 2);
+            $teile = explode('x', $kern);
+            if (count($teile) !== 2) {
+                continue;
+            }
+            $b = trim($teile[0]);
+            $l = trim($teile[1]);
+            if ($b !== '' && $l !== '' && is_numeric($b) && is_numeric($l)
+                && (int) $b > 0 && (int) $l > 0
+                && (string) (int) $b === $b && (string) (int) $l === $l) {
+                return ['breite' => (int) $b, 'laenge' => (int) $l];
+            }
+        }
+        return $leer;
     }
 }
